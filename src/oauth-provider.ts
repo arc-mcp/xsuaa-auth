@@ -23,8 +23,8 @@
  */
 
 import { StatelessDcrClientStore } from './dcr-client-store.js';
-import { ProxyOAuthServerProvider } from './internal/sdk.js';
 import type { OAuthClientInformationFull } from './internal/sdk.js';
+import { ProxyOAuthServerProvider } from './internal/sdk.js';
 import type { Logger } from './logger.js';
 import { noopLogger } from './logger.js';
 import { OAuthStateCodec } from './oauth-state.js';

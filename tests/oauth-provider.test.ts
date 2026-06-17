@@ -24,6 +24,7 @@ vi.mock('@sap/xssec', () => {
 });
 
 const { XsuaaProxyOAuthProvider, createXsuaaOAuthProvider } = await import('../src/index.js');
+
 import type { OAuthStateCodec } from '../src/index.js';
 import { makeCapturingLogger } from './helpers/test-logger.js';
 
@@ -70,7 +71,10 @@ type AnyProvider = {
 function createTestProxyProvider({
   callbackUrl = 'https://arc1.example.com/oauth/callback',
   stateToken = 'mcp-state-token',
-}: { callbackUrl?: string; stateToken?: string } = {}): {
+}: {
+  callbackUrl?: string;
+  stateToken?: string;
+} = {}): {
   provider: AnyProvider;
   stateCodec: { encode: ReturnType<typeof vi.fn> };
 } {

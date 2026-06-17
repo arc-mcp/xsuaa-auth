@@ -26,6 +26,7 @@ vi.mock('@sap/xssec', () => {
 const express = (await import('express')).default;
 const request = (await import('supertest')).default;
 const { setupHttpAuth } = await import('../src/index.js');
+
 import type { Express } from 'express';
 import { type CapturingLogger, makeCapturingLogger } from './helpers/test-logger.js';
 

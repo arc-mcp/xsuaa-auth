@@ -13,8 +13,8 @@
  */
 
 import crypto from 'node:crypto';
-import { InvalidTokenError } from './internal/sdk.js';
 import type { AuthInfo } from './internal/sdk.js';
+import { InvalidTokenError } from './internal/sdk.js';
 import type { Logger } from './logger.js';
 import { noopLogger } from './logger.js';
 import type { ApiKeyEntry, ExpandScopes, Verifier } from './types.js';

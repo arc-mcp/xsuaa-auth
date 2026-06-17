@@ -9,10 +9,10 @@
 
 import { describe, expect, it } from 'vitest';
 import {
-  XSUAA_DEFAULT_REDIRECT_URIS,
-  XSUAA_DEFAULT_REDIRECT_URI_PATTERNS,
   matchesRedirectPattern,
   validateRedirectUri,
+  XSUAA_DEFAULT_REDIRECT_URI_PATTERNS,
+  XSUAA_DEFAULT_REDIRECT_URIS,
 } from '../src/index.js';
 
 describe('matchesRedirectPattern (redirect-uri allowlist for the shared XSUAA client)', () => {

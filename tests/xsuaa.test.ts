@@ -46,6 +46,7 @@ vi.mock('@sap/xssec', () => {
 
 // Import AFTER the mock is registered.
 const { createXsuaaTokenVerifier, qualifyXsuaaScopes, RESERVED_OAUTH_SCOPES } = await import('../src/index.js');
+
 import { makeCapturingLogger } from './helpers/test-logger.js';
 
 const CREDS = {

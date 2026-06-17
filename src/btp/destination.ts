@@ -13,8 +13,8 @@
 
 import {
   type DestinationAuthToken,
-  type Destination as SdkDestination,
   getDestination,
+  type Destination as SdkDestination,
 } from '@sap-cloud-sdk/connectivity';
 import { type Logger, noopLogger } from '../logger.js';
 import { type BTPProxyConfig, createConnectivityProxy } from './connectivity.js';

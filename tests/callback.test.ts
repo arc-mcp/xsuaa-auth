@@ -10,7 +10,7 @@
 import express from 'express';
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
-import { OAuthStateCodec, StatelessDcrClientStore, createOAuthCallbackHandler } from '../src/index.js';
+import { createOAuthCallbackHandler, OAuthStateCodec, StatelessDcrClientStore } from '../src/index.js';
 
 const SECRET = 'callback-test-signing-secret-1234567890';
 const TEST_CLIENT_ID = 'mcp-test-client';

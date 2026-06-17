@@ -16,7 +16,7 @@
  * `ApiKeyEntry{key, scopes, clientId}`.
  */
 
-import { type CryptoKey, type JWK, SignJWT, exportJWK, generateKeyPair } from 'jose';
+import { type CryptoKey, exportJWK, generateKeyPair, type JWK, SignJWT } from 'jose';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type AuthInfo, createApiKeyVerifier, createChainedTokenVerifier, createOidcVerifier } from '../src/index.js';
 import { InvalidTokenError } from '../src/internal/sdk.js';
