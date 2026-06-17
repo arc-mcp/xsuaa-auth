@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/arc-mcp/xsuaa-auth/compare/v0.1.1...v0.1.2) (2026-06-17)
+
+
+### Bug Fixes
+
+* exclude package.json from biome so release-please bumps do not break lint ([#8](https://github.com/arc-mcp/xsuaa-auth/issues/8)) ([c03413f](https://github.com/arc-mcp/xsuaa-auth/commit/c03413f4a47d725cd49ef3efd58c2db2482686a5))
+
 ## [0.1.1](https://github.com/arc-mcp/xsuaa-auth/compare/v0.1.0...v0.1.1) (2026-06-17)
 
 
