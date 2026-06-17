@@ -12,7 +12,7 @@ This spec freezes: scope, entrypoints, dependency ranges, the logger contract, e
 | | |
 |---|---|
 | Org / repo | `github.com/arc-mcp/xsuaa-auth` (working) |
-| npm | `arc-mcp-xsuaa-auth` (working name — final at scaffold; never `marianfoo` scope) |
+| npm | `@arc-mcp/xsuaa-auth` (working name — final at scaffold; never `marianfoo` scope) |
 | Module system | **ESM-only**, `"type": "module"`, `engines.node >= 22` |
 | Maintenance | solo |
 | Release | release-please (`node`, single package, no `extra-files`) + npm OIDC trusted publishing (automatic provenance) |
@@ -171,8 +171,8 @@ export function createXsuaaTokenVerifier(
 ): Verifier;
 export function createOidcVerifier(   // lazy-imports jose
   issuer: string, audience: string,
-  options?: { clockToleranceSec?: number; scopeClaim?: string; algorithms?: string[]; acceptedScopes?: string[]; expandScopes?: ExpandScopes; logger?: Logger },
-): Verifier;   // algorithms default ['RS256','ES256','PS256'] — pins allowed JWT algs (closes alg:none / algorithm-confusion)
+  options?: { clockToleranceSec?: number; scopeClaim?: string; algorithms?: string[]; acceptedScopes?: string[]; fallbackScopes?: string[]; expandScopes?: ExpandScopes; logger?: Logger },
+): Verifier;   // algorithms default ['RS256','ES256','PS256'] — pins allowed JWT algs (closes alg:none / algorithm-confusion). fallbackScopes default [] — fail closed when a verified token carries no accepted scope; set ['read'] for legacy read-only fallback
 export function createApiKeyVerifier(keys: string | ApiKeyEntry[], options?: { expandScopes?: ExpandScopes; logger?: Logger }): Verifier;
 export function createChainedTokenVerifier(   // does NOT re-apply expandScopes — the sub-verifiers own it (applied once)
   config: { apiKeys?: string | ApiKeyEntry[] },
@@ -197,7 +197,7 @@ export interface AuthOptions {
     dcrTtlSeconds?: number; stateTtlSeconds?: number; dcrSigningSecret?: string;
     callbackUrl?: string;   // this server's own /oauth/callback sent to XSUAA (#214); default `${appUrl}/oauth/callback`
   };
-  oidc?: { issuer: string; audience: string; clockToleranceSec?: number; algorithms?: string[]; scopeClaim?: string };
+  oidc?: { issuer: string; audience: string; clockToleranceSec?: number; algorithms?: string[]; scopeClaim?: string; fallbackScopes?: string[] };   // fallbackScopes default [] (fail closed); ['read'] = legacy read-only fallback
   allowedOrigins?: string[];   // CORS allowlist for browser MCP clients (e.g. https://claude.ai); facade applies exact-match CORS + credentials. Unset = no CORS.
   required?: boolean;          // default false → returns undefined (open) with a loud warn; true → throws if no auth method configured
   expandScopes?: ExpandScopes;
@@ -211,6 +211,7 @@ Notes:
 - **`requiredScopes`** is enforced by the facade via the SDK's `requireBearerAuth({ requiredScopes })`; building-block users enforce scopes themselves. (calmcp sets `requiredScopes: ['Viewer']`; LISA/arc-1 leave it unset.) The facade derives `issuerUrl`/`baseUrl`/`resourceServerUrl` from `xsuaa.appUrl` and mounts the standard `/authorize` `ensureRedirectUri` (pattern-gated) + `/oauth/callback` + `mcpAuthRouter`.
 - **`expandScopes`** is the injected policy seam (default identity), applied **exactly once** — by each sub-verifier (XSUAA/OIDC/api-key) to the scopes it extracts before returning `AuthInfo`. `createChainedTokenVerifier` does **NOT** re-apply it (re-application would double a non-idempotent expander); it only builds its internal api-key verifier with the same hook so the api-key path expands once too. arc-1 passes its `authz/policy` fn so AuthInfo carries expanded scopes exactly as today; calmcp/LISA omit it. The facade threads it into every verifier uniformly; building-block users pass it per verifier.
 - **`acceptedScopes`** (verifier option; default `DEFAULT_ACCEPTED_SCOPES` = the arc-1 set) is the scope-name allowlist applied to the token's claims. The facade threads `xsuaa.scopesSupported` (when set) into both the XSUAA and OIDC verifiers as `acceptedScopes`, so a consumer that advertises non-arc-1 scopes (calmcp: `scopesSupported:['Viewer']`) keeps them instead of having them filtered out.
+- **`fallbackScopes`** (OIDC verifier option; default `[]`) is the **fail-closed** scope set returned when a *verified* OIDC token carries no accepted scope — either it has no `scope`/`scp` claims at all, or its claims survive verification but none match `acceptedScopes`. The default `[]` grants **no** privileges, so an IdP that is misconfigured to drop scope claims cannot silently hand out access. A consumer that wants the historical read-only fallback opts in explicitly with `fallbackScopes: ['read']` (arc-1 does this to preserve its prior default). `fallbackScopes` is **not** run through `expandScopes` — it is an already-final grant chosen by the consumer, not a token-derived scope set. The facade exposes it as `oidc.fallbackScopes`.
 - **api-key profiles** are not a package concept: arc-1 maps its `API_KEY_PROFILES` → `ApiKeyEntry[]` (`{key, scopes}`) before passing.
 - The facade does **not** include arc-1's Copilot `/authorize` bypass or reverse-proxy base-path overrides — those stay in arc-1's `startHttpServer` using the building blocks.
 - When `options.xsuaa` is omitted (api-key/OIDC only), the facade builds the chained verifier and returns bearer middleware **without** mounting the OAuth router/callback — mirroring arc-1's non-XSUAA path (`createStandardVerifier`).
@@ -282,8 +283,8 @@ The SAP HTTP client (arc-1 `AdtHttpClient`, LISA `I18nClient`, calmcp `CalmHttpC
 ## 11. Minimal-diff adoption
 
 **arc-1 (primary goal — import-swap + glue, no logic change):**
-- `.`: in `http.ts`, swap 5 imports `./server/*` → `arc-mcp-xsuaa-auth`; map the ~10 `ServerConfig` fields → `AuthOptions`; pass `config.logger`; pass `authz/policy.expandScopes` as the `expandScopes` hook; build `ApiKeyEntry[]` from `API_KEY_PROFILES`. `startHttpServer` (incl. Copilot bypass + base-path) stays.
-- `./btp`: delete `src/adt/btp.ts`; repoint ~5 call sites + the `BTPConfig`/`BTPProxyConfig`/`PerUserAuthTokens` type imports to `arc-mcp-xsuaa-auth/btp`; pass `logger` to the btp calls. `AdtHttpClient`/`applyPerUserAuthTokens`/`createPerUserClient` unchanged.
+- `.`: in `http.ts`, swap 5 imports `./server/*` → `@arc-mcp/xsuaa-auth`; map the ~10 `ServerConfig` fields → `AuthOptions`; pass `config.logger`; pass `authz/policy.expandScopes` as the `expandScopes` hook; build `ApiKeyEntry[]` from `API_KEY_PROFILES`. `startHttpServer` (incl. Copilot bypass + base-path) stays.
+- `./btp`: delete `src/adt/btp.ts`; repoint ~5 call sites + the `BTPConfig`/`BTPProxyConfig`/`PerUserAuthTokens` type imports to `@arc-mcp/xsuaa-auth/btp`; pass `logger` to the btp calls. `AdtHttpClient`/`applyPerUserAuthTokens`/`createPerUserClient` unchanged.
 - Net: import repoints + logger injection + config mapping. Delete ~1,160 LOC (auth modules + btp). Lower `check:sizes`.
 
 **calmcp (near-zero diff):** delete `src/httpAuth/`; `setupHttpAuth(app, authOptions, pinoAdapter(logger))` at the existing call site; set `clientIdPrefix:'calmcp-'`, `requiredScopes:['Viewer']`, `scopesSupported:['Viewer']`, `resourceName`. No PP (doesn't import `./btp`). Its PR also notes the chain-order change (api-key-first → frozen XSUAA→OIDC→api-key; outcome-identical).
@@ -329,7 +330,7 @@ Out of module scope (stays consumer env): `SAP_ALLOW_*` / `SAP_ALLOWED_PACKAGES`
 - **Rate limiting** — post-v1. (arc-1's `auth-rate-limit` + `mcp-rate-limit` are generic; revisit as a `./rate-limit` sub-module once core ships and a consumer asks. Until then all three keep their own.)
 - **`proxyFetch` shared forward-proxy helper** — once arc-1's `AdtHttpClient` is otherwise touched (§7).
 - **`./testing` mocks** — mock `Verifier`/`Destination` for consumers' tests; v1.1 stretch.
-- **npm final name** (`arc-mcp-xsuaa-auth` recommended), **docs-site choice** (VitePress recommended).
+- **npm final name** (`@arc-mcp/xsuaa-auth` recommended), **docs-site choice** (VitePress recommended).
 - **SDK v2 path** — adopt only after v2 GA + tested; the §8 insulation makes it a one-file change.
 - **IAS / SAP Cloud Identity Services** (`@sap/xssec` `IdentityService`) — the package is XSUAA-specific by name; SAP is steering new apps toward IAS, so a sibling `IdentityService` verifier is a roadmap candidate, not v1.
 

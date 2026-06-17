@@ -1,4 +1,4 @@
-# Dependabot configuration for arc-mcp-xsuaa-auth.
+# Dependabot configuration for @arc-mcp/xsuaa-auth.
 # Two ecosystems: npm (library + dev deps) and github-actions (CI/release).
 # Schedule: weekly. Security advisories are handled separately by Dependabot's
 # security-updates feature (enable in repo Settings → Advanced Security).

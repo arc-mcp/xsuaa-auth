@@ -1,5 +1,5 @@
 /**
- * `arc-mcp-xsuaa-auth` — core auth entrypoint (`.`).
+ * `@arc-mcp/xsuaa-auth` — core auth entrypoint (`.`).
  *
  * Re-exports the full public core-auth surface frozen in SPEC §6. The
  * principal-propagation surface lives behind the separate `./btp` entrypoint and

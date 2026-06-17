@@ -2,7 +2,7 @@
  * `./btp` — per-user destination lookup (principal propagation).
  *
  * Ported from arc-1 `tests/unit/adt/btp-pp.test.ts`. Adaptations for the package:
- *   - imported from `arc-mcp-xsuaa-auth/btp` (here via `../../src/btp.js`),
+ *   - imported from `@arc-mcp/xsuaa-auth/btp` (here via `../../src/btp.js`),
  *   - adds the package's JWT-shape guard test (a non-JWT — e.g. an api-key — throws),
  *   - `@sap-cloud-sdk/connectivity`'s `getDestination` is mocked; the jwt-bearer
  *     "Option 2" fallback path mocks the global `fetch`.
@@ -89,10 +89,46 @@ describe('lookupDestinationWithUserToken', () => {
 
     const result = await lookupDestinationWithUserToken(TEST_BTP_CONFIG, 'SAP_TRIAL', USER_JWT);
 
-    expect(mockGetDestination).toHaveBeenCalledWith({ destinationName: 'SAP_TRIAL', jwt: USER_JWT, useCache: true });
+    // The PP (user-JWT) lookup MUST pin per-user cache isolation so one user's
+    // propagated identity can never be served from another user's cache entry.
+    expect(mockGetDestination).toHaveBeenCalledWith({
+      destinationName: 'SAP_TRIAL',
+      jwt: USER_JWT,
+      useCache: true,
+      isolationStrategy: 'tenant-user',
+    });
     expect(result.destination.Name).toBe('SAP_TRIAL');
     expect(result.destination.Authentication).toBe('PrincipalPropagation');
     expect(result.authTokens.sapConnectivityAuth).toBe('Bearer saml-assertion-encoded');
+  });
+
+  // ── Security: per-user cache isolation on the PP lookup ──
+  it('pins isolationStrategy "tenant-user" on the per-user (PP) getDestination call', async () => {
+    mockGetDestination.mockResolvedValueOnce({
+      name: 'SAP_TRIAL',
+      url: 'http://sap:50000',
+      authentication: 'PrincipalPropagation',
+      proxyType: 'OnPremise',
+      username: '',
+      password: '',
+      authTokens: [
+        {
+          type: 'PrincipalPropagationToken',
+          value: 'saml',
+          error: null,
+          http_header: { key: 'SAP-Connectivity-Authentication', value: 'Bearer saml' },
+        },
+      ],
+    });
+
+    await lookupDestinationWithUserToken(TEST_BTP_CONFIG, 'SAP_TRIAL', USER_JWT);
+
+    // Assert the cache-isolation option specifically (not just the whole arg shape),
+    // so a regression that drops it — silently widening the cache key to tenant-only
+    // and risking a cross-user identity leak — fails this test.
+    const callArg = mockGetDestination.mock.calls[0][0] as { useCache?: boolean; isolationStrategy?: string };
+    expect(callArg.isolationStrategy).toBe('tenant-user');
+    expect(callArg.useCache).toBe(true);
   });
 
   // ── Shape 2: OAuth2SAMLBearerAssertion → Bearer token (top-level value) ──

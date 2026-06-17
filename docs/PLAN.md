@@ -76,7 +76,7 @@ peer: `@modelcontextprotocol/sdk >=1.18.2 <2`, `express ^5.0.1`, `jose >=5 <7` (
 
 ## 6. arc-1 integration (P6 — local worktree)
 1. `git worktree add ../arc-1-authmod -b test/auth-module-integration main` (off arc-1 **main**, isolated from the MSAG branch / shared tree).
-2. Add `"arc-mcp-xsuaa-auth": "file:../arc-mcp-auth"` to the worktree's package.json (or `npm link`); `npm install`.
+2. Add `"@arc-mcp/xsuaa-auth": "file:../arc-mcp-auth"` to the worktree's package.json (or `npm link`); `npm install`.
 3. Apply SPEC §11 edits: swap imports in `src/server/http.ts` (auth slice) + `src/server/server.ts` + `src/adt/*`; **delete** `src/server/{stateless-client-store,xsuaa,oauth-state}.ts` + `src/adt/btp.ts`; map `ServerConfig`→`AuthOptions`; inject `config.logger` + `authz/policy.expandScopes`; build `ApiKeyEntry[]` from `API_KEY_PROFILES`.
 4. Run arc-1's full local gate: `npm run build`, `npm run typecheck`, `npm run lint`, `npm test`. Fix to green. Confirm the auth + btp behavior is unchanged (existing arc-1 tests are the oracle). This **proves the minimal-diff + drop-in claims**.
 5. Worktree is throwaway validation — not committed/pushed, not the docs-PR.

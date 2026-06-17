@@ -3,7 +3,7 @@
  *
  * Ported from arc-1 `tests/unit/adt/btp.test.ts`. Adaptations for the package:
  *   - `parseVCAPServices(env?)` takes an explicit env (no process.env mutation),
- *   - functions are imported from `arc-mcp-xsuaa-auth/btp` (here via `../../src/btp.js`),
+ *   - functions are imported from `@arc-mcp/xsuaa-auth/btp` (here via `../../src/btp.js`),
  *   - the global `fetch` is stubbed for the token + destination-service calls.
  */
 

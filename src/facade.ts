@@ -67,6 +67,10 @@ export interface AuthOptions {
     algorithms?: string[];
     /** Override the primary scope-claim name (default `scope`). */
     scopeClaim?: string;
+    /** Scopes granted when a verified OIDC token carries no accepted scope.
+     *  Defaults to `[]` (fail closed). Set `['read']` to opt into legacy
+     *  read-only fallback under IdP scope-claim misconfiguration. */
+    fallbackScopes?: string[];
   };
   /**
    * CORS allowlist for browser MCP clients (e.g. `https://claude.ai`); the facade
@@ -129,6 +133,7 @@ export function setupHttpAuth(
         algorithms: options.oidc.algorithms,
         scopeClaim: options.oidc.scopeClaim,
         acceptedScopes,
+        fallbackScopes: options.oidc.fallbackScopes,
         expandScopes,
         logger,
       })

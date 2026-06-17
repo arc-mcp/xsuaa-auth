@@ -22,7 +22,7 @@
  * yours to mount on `/mcp` behind the returned `bearer` middleware.
  */
 
-import { type AuthOptions, type Logger, loadXsuaaCredentials, resolveAppUrl, setupHttpAuth } from 'arc-mcp-xsuaa-auth';
+import { type AuthOptions, type Logger, loadXsuaaCredentials, resolveAppUrl, setupHttpAuth } from '@arc-mcp/xsuaa-auth';
 import express from 'express';
 
 // A tiny console logger matching the package's structural Logger contract

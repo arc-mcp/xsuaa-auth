@@ -1,5 +1,5 @@
 /**
- * `arc-mcp-xsuaa-auth/btp` — Principal-propagation entrypoint (SPEC §7).
+ * `@arc-mcp/xsuaa-auth/btp` — Principal-propagation entrypoint (SPEC §7).
  *
  * BTP destination lookup, per-user PP token exchange, and the Cloud Connector
  * connectivity-proxy descriptor. Lifted near-verbatim from arc-1 `src/adt/btp.ts`;

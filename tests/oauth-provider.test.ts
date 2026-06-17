@@ -3,7 +3,7 @@
  *
  * Ported from the `createXsuaaOAuthProvider` describe block in arc-1
  * `tests/unit/server/xsuaa.test.ts`. Adaptations for the package:
- *   - the provider/factory are imported from `arc-mcp-xsuaa-auth`,
+ *   - the provider/factory are imported from `@arc-mcp/xsuaa-auth`,
  *   - the dcr-signing-source assertions use the package's generic log text + the
  *     injected logger (arc-1's `dcrSigningSource: 'env'` is `'override'` here, and
  *     the message no longer mentions `ARC1_DCR_SIGNING_SECRET`),

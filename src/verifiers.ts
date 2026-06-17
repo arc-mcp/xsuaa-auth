@@ -120,10 +120,19 @@ export function createApiKeyVerifier(
  * Tries `scope` (space-separated string, standard OIDC) then `scp` (Azure AD:
  * space-delimited string for delegated tokens, or array for app tokens).
  * Filters to `acceptedScopes`, applies the injected `expandScopes`, and falls
- * back to read-only when no scope claims are present.
+ * back to `fallbackScopes` when no usable scope claims are present.
+ *
+ * SECURITY — fail-closed by default: both no-scope-claims and
+ * scopes-present-but-none-accepted return `fallbackScopes`, which DEFAULTS TO
+ * `[]` (no privileges). A misconfigured IdP that omits scope claims therefore
+ * grants nothing rather than silently handing out read access. A consumer that
+ * wants the legacy read-only behavior opts in via `fallbackScopes: ['read']`
+ * (threaded from the verifier option of the same name) — arc-1 does exactly that
+ * to preserve its historical default.
  *
  * @param scopeClaim Optional override of the primary claim name (default `scope`).
  * @param acceptedScopes Scope names to keep (default {@link DEFAULT_ACCEPTED_SCOPES}).
+ * @param fallbackScopes Scopes granted when no accepted scope is present (default `[]` = fail closed).
  */
 function extractOidcScopes(
   payload: Record<string, unknown>,
@@ -131,6 +140,7 @@ function extractOidcScopes(
   logger: Logger,
   scopeClaim = 'scope',
   acceptedScopes: string[] = DEFAULT_ACCEPTED_SCOPES,
+  fallbackScopes: string[] = [],
 ): string[] {
   let rawScopes: string[] | undefined;
 
@@ -143,22 +153,26 @@ function extractOidcScopes(
     rawScopes = (payload.scp as unknown[]).filter((s): s is string => typeof s === 'string' && s.length > 0);
   }
 
-  // No scope claims at all → read-only (safe default).
+  // No scope claims at all → fail closed to `fallbackScopes` (default []). The
+  // fallback is NOT run through `expandScopes`: it is an explicit, already-final
+  // grant chosen by the consumer, not a token-derived scope set.
   if (rawScopes === undefined) {
     logger.warn(
-      'OIDC JWT has no scope/scp claims — granting read-only access. ' +
-        'Configure scope claims in your OIDC provider to grant write/data/sql access.',
+      `OIDC JWT has no scope/scp claims — falling back to the configured fallbackScopes (default none). Configure scope claims in your OIDC provider, or set fallbackScopes, to grant access. Granted: [${fallbackScopes.join(', ')}]`,
     );
-    return ['read'];
+    return fallbackScopes;
   }
 
   const accepted = new Set(acceptedScopes);
   const filtered = rawScopes.filter((s) => accepted.has(s));
 
-  // Scopes present but none accepted → minimum read access.
+  // Scopes present but none accepted → fail closed to `fallbackScopes` (default []).
   if (filtered.length === 0) {
-    logger.warn('OIDC JWT has scope claims but none match accepted scopes — granting read-only', { rawScopes });
-    return ['read'];
+    logger.warn(
+      `OIDC JWT has scope claims but none match accepted scopes — falling back to the configured fallbackScopes (default none). Granted: [${fallbackScopes.join(', ')}]`,
+      { rawScopes },
+    );
+    return fallbackScopes;
   }
 
   return expandScopes(filtered);
@@ -181,6 +195,10 @@ export function createOidcVerifier(
     scopeClaim?: string;
     algorithms?: string[];
     acceptedScopes?: string[];
+    /** Scopes granted when a verified token carries no accepted scope. Defaults to
+     *  `[]` (fail closed) so an IdP misconfiguration grants no privileges. Set to
+     *  e.g. `['read']` to opt into legacy read-only fallback (arc-1 does this). */
+    fallbackScopes?: string[];
     expandScopes?: ExpandScopes;
     logger?: Logger;
   } = {},
@@ -190,6 +208,7 @@ export function createOidcVerifier(
   const algorithms = options.algorithms ?? DEFAULT_OIDC_ALGORITHMS;
   const scopeClaim = options.scopeClaim ?? 'scope';
   const acceptedScopes = options.acceptedScopes ?? DEFAULT_ACCEPTED_SCOPES;
+  const fallbackScopes = options.fallbackScopes ?? [];
 
   // jose is lazy-imported once and the JWKS memoized — `jwtVerify` + the remote
   // JWKS type come from the same module instance.
@@ -252,6 +271,7 @@ export function createOidcVerifier(
         logger,
         scopeClaim,
         acceptedScopes,
+        fallbackScopes,
       );
 
       return {

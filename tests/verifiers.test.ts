@@ -147,10 +147,36 @@ describe('createOidcVerifier', () => {
     expect(info.extra).toMatchObject({ sub: 'user-1', iss: ISSUER });
   });
 
-  it('falls back to read-only when the token has no scope/scp claims', async () => {
+  it('fails closed to NO scopes by default when the token has no scope/scp claims', async () => {
     stubDiscoveryFetch();
     const token = await mintToken({ sub: 'user-2' });
     const verify = createOidcVerifier(ISSUER, AUDIENCE);
+    const info = await verify(token);
+    // Default fallbackScopes is [] — an IdP that omits scope claims grants nothing.
+    expect(info.scopes).toEqual([]);
+  });
+
+  it('grants the opt-in fallbackScopes (legacy read-only) when the token has no scope/scp claims', async () => {
+    stubDiscoveryFetch();
+    const token = await mintToken({ sub: 'user-2b' });
+    // arc-1 opts into the historical read-only fallback via fallbackScopes:['read'].
+    const verify = createOidcVerifier(ISSUER, AUDIENCE, { fallbackScopes: ['read'] });
+    const info = await verify(token);
+    expect(info.scopes).toEqual(['read']);
+  });
+
+  it('fails closed to NO scopes when scopes are present but none are accepted (default)', async () => {
+    stubDiscoveryFetch();
+    const token = await mintToken({ scope: 'totally-unknown other-unknown', sub: 'user-2c' });
+    const verify = createOidcVerifier(ISSUER, AUDIENCE);
+    const info = await verify(token);
+    expect(info.scopes).toEqual([]);
+  });
+
+  it('grants the opt-in fallbackScopes when scopes are present but none are accepted', async () => {
+    stubDiscoveryFetch();
+    const token = await mintToken({ scope: 'totally-unknown', sub: 'user-2d' });
+    const verify = createOidcVerifier(ISSUER, AUDIENCE, { fallbackScopes: ['read'] });
     const info = await verify(token);
     expect(info.scopes).toEqual(['read']);
   });
@@ -212,9 +238,9 @@ describe('createOidcVerifier', () => {
   it('keeps a non-arc-1 scope (e.g. "Viewer") when acceptedScopes is set to it', async () => {
     stubDiscoveryFetch();
     const token = await mintToken({ scope: 'Viewer', sub: 'calmcp-user' });
-    // With the default accepted set, "Viewer" is unknown → read-only fallback.
+    // With the default accepted set, "Viewer" is unknown → fail-closed (empty) fallback.
     const defaultVerify = createOidcVerifier(ISSUER, AUDIENCE);
-    expect((await defaultVerify(token)).scopes).toEqual(['read']);
+    expect((await defaultVerify(token)).scopes).toEqual([]);
     // With acceptedScopes:['Viewer'], the consumer's scope flows through.
     const viewerVerify = createOidcVerifier(ISSUER, AUDIENCE, { acceptedScopes: ['Viewer'] });
     expect((await viewerVerify(token)).scopes).toEqual(['Viewer']);

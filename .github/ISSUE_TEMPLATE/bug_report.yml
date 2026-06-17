@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a defect in arc-mcp-xsuaa-auth
+description: Report a defect in @arc-mcp/xsuaa-auth
 title: "bug: "
 labels: ["bug"]
 body:
@@ -40,7 +40,7 @@ body:
   - type: input
     id: package-version
     attributes:
-      label: "arc-mcp-xsuaa-auth version"
+      label: "@arc-mcp/xsuaa-auth version"
       placeholder: 0.1.0
     validations:
       required: true

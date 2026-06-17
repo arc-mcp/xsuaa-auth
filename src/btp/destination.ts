@@ -162,11 +162,21 @@ export async function lookupDestinationWithUserToken(
 
   // Use SAP Cloud SDK to resolve the destination with per-user JWT.
   // The SDK handles: service token acquisition, X-User-Token header,
-  // and per-user destination caching (keyed by destinationName + jwt).
+  // and per-user destination caching.
+  //
+  // SECURITY (cross-user cache isolation): a PrincipalPropagation destination
+  // resolves to a per-user SAML assertion / bearer token, so a cache entry MUST
+  // NOT be shared across users. We pin `isolationStrategy: 'tenant-user'`
+  // explicitly: the SDK's default is already 'tenant-user', but pinning it makes
+  // the per-user guarantee load-bearing in code (a future SDK default change or a
+  // technical-destination copy-paste cannot silently widen the cache key to
+  // tenant-only and leak one user's propagated identity to another). The value is
+  // the SDK's `IsolationStrategy` string-literal union ('tenant' | 'tenant-user').
   const sdkDest: SdkDestination | null = await getDestination({
     destinationName,
     jwt: userJwt,
     useCache: true,
+    isolationStrategy: 'tenant-user',
   });
 
   if (!sdkDest) {

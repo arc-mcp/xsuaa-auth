@@ -1,5 +1,5 @@
 name: Feature request
-description: Suggest an enhancement to arc-mcp-xsuaa-auth
+description: Suggest an enhancement to @arc-mcp/xsuaa-auth
 title: "feat: "
 labels: ["enhancement"]
 body:

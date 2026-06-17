@@ -3,7 +3,7 @@
 > ⚠️ **`SPEC.md` is the authoritative contract** (frozen deps, API, scope). Where this research doc differs, the SPEC wins — notably: `express` resolved to **`^5.0.1`** (Express 4 is moot; the MCP SDK hard-depends on express 5), SDK floor **`>=1.18.2`**, rate-limit **out of v1**, PP **in v1** (`./btp`), and the verifier chain order **frozen as XSUAA→OIDC→api-key**. This doc is retained for rationale/history.
 
 > **Status:** Research / pre-spec. **Date:** 2026-06-17. **Workstream:** Fork A (auth module).
-> **Org:** `github.com/arc-mcp` (standalone repo). **Maintenance:** solo. **npm:** `arc-mcp-xsuaa-auth` (unscoped — no npm org needed; never `marianfoo`). **Repo:** `arc-mcp/xsuaa-auth`.
+> **Org:** `github.com/arc-mcp` (standalone repo). **Maintenance:** solo. **npm:** `@arc-mcp/xsuaa-auth` (scoped — published under the `arc-mcp` npm org; never `marianfoo`). **Repo:** `arc-mcp/xsuaa-auth`.
 > **End goal:** a frozen SPEC. This doc gathers evidence and proposes ADRs (each with a recommendation) to confirm *before* the spec.
 
 Grounded in three investigations (2026-06-17): (1) ARC-1 auth current-state (exact signatures + coupling), (2) calmcp + LISA auth teardown (3-way diff), (3) external best-practice research (ESM packaging, MCP SDK auth, @sap/xssec, release/publish). Versions below were verified against primary sources, not recalled.
@@ -96,8 +96,8 @@ The crypto core (`stateless-client-store`, `oauth-state`, `XsuaaProxyOAuthProvid
 
 ### ADR-001 — Repo, org, naming
 **Context:** New org `arc-mcp`; solo; no `marianfoo` scope; name deferrable.
-**Options:** `@arc-mcp/auth` · `arc-mcp-xsuaa-auth` · `@arc-mcp/mcp-btp-auth`.
-**Recommendation:** repo `arc-mcp/auth`; npm **`arc-mcp-xsuaa-auth`** (most descriptive — XSUAA-centric MCP auth; leaves room for a sibling `@arc-mcp/*` later). Confirm name at scaffold.
+**Options:** `@arc-mcp/auth` · `@arc-mcp/xsuaa-auth` · `@arc-mcp/mcp-btp-auth`.
+**Recommendation:** repo `arc-mcp/auth`; npm **`@arc-mcp/xsuaa-auth`** (most descriptive — XSUAA-centric MCP auth; leaves room for a sibling `@arc-mcp/*` later). Confirm name at scaffold.
 **Consequences:** Org scope decouples from personal identity; scoped packages publish fine under OIDC trusted publishing.
 
 ### ADR-002 — Package contents / module boundary
@@ -166,7 +166,7 @@ The crypto core (`stateless-client-store`, `oauth-state`, `XsuaaProxyOAuthProvid
 
 ### ADR-015 — Rate limiting as an optional sub-module
 **Context:** All three rate-limit, but wire it in their transport, not the auth core; shapes differ (1 vs 2 layers).
-**Recommendation:** Ship `createAuthRateLimiter` (per-IP) + `createMcpRateLimiter` (per-user) under **`arc-mcp-xsuaa-auth/rate-limit`**, deps `express-rate-limit` + `rate-limiter-flexible`. Not part of the facade; host mounts them.
+**Recommendation:** Ship `createAuthRateLimiter` (per-IP) + `createMcpRateLimiter` (per-user) under **`@arc-mcp/xsuaa-auth/rate-limit`**, deps `express-rate-limit` + `rate-limiter-flexible`. Not part of the facade; host mounts them.
 **Consequences:** Core stays focused; rate-limit is opt-in and independently versioned-in.
 
 ---
@@ -174,7 +174,7 @@ The crypto core (`stateless-client-store`, `oauth-state`, `XsuaaProxyOAuthProvid
 ## 6. Proposed public API surface (illustrative — not frozen)
 
 ```ts
-// arc-mcp-xsuaa-auth
+// @arc-mcp/xsuaa-auth
 export interface Logger { debug(m,d?):void; info(m,d?):void; warn(m,d?):void; error(m,d?):void; emitAudit?(e):void }
 
 export interface AuthOptions {
@@ -203,12 +203,12 @@ export function createOAuthCallbackHandler(stateCodec, clientStore?, logger?): R
 export function validateRedirectUri(uri, patterns?): void;
 export type { XsuaaCredentials, AuthInfo };
 
-// Sub-module: arc-mcp-xsuaa-auth/rate-limit
+// Sub-module: @arc-mcp/xsuaa-auth/rate-limit
 export function createAuthRateLimiter(endpoint, perMinute, opts?): RequestHandler;
 export function createMcpRateLimiter(perMinute): McpRateLimiter;
 ```
 
-**Minimal ARC-1 diff** (validates the primary goal): swap 5 imports `./server/*` → `arc-mcp-xsuaa-auth`; pass `config.logger` into the factories; map the handful of `ServerConfig` fields → `AuthOptions`; inject `expandScopes` from `authz/policy`. `startHttpServer` keeps orchestrating. No behavior change.
+**Minimal ARC-1 diff** (validates the primary goal): swap 5 imports `./server/*` → `@arc-mcp/xsuaa-auth`; pass `config.logger` into the factories; map the handful of `ServerConfig` fields → `AuthOptions`; inject `expandScopes` from `authz/policy`. `startHttpServer` keeps orchestrating. No behavior change.
 
 ---
 
@@ -226,7 +226,7 @@ export function createMcpRateLimiter(perMinute): McpRateLimiter;
 
 ## 8. Open decisions (need confirmation)
 
-- **npm name:** RESOLVED → `arc-mcp-xsuaa-auth` (unscoped, no npm org; GitHub repo `arc-mcp/xsuaa-auth`).
+- **npm name:** RESOLVED → `@arc-mcp/xsuaa-auth` (scoped, under the `arc-mcp` npm org; GitHub repo `arc-mcp/xsuaa-auth`).
 - **MCP SDK peer floor:** `>=1.12` (covers LISA as-is, wider risk) vs `>=1.28` (forces LISA to bump in its PR, tighter). *Recommend `>=1.12 <2` + CI matrix*, since LISA bumps anyway in its migration PR — confirm appetite for the matrix.
 - **Rate-limit sub-module in v1?** Recommended yes (ADR-015); could defer if we want the smallest first release.
 - **Docs site:** VitePress (recommended, lean) vs Docusaurus (if versioned docs matter early).

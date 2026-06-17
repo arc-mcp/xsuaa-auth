@@ -1,11 +1,11 @@
-# arc-mcp-xsuaa-auth
+# @arc-mcp/xsuaa-auth
 
 **XSUAA / OAuth authentication + SAP BTP principal propagation for [Model Context Protocol](https://modelcontextprotocol.io) servers** built on Express and [`@modelcontextprotocol/sdk`](https://github.com/modelcontextprotocol/typescript-sdk).
 
 [![CI](https://github.com/arc-mcp/xsuaa-auth/actions/workflows/ci.yml/badge.svg)](https://github.com/arc-mcp/xsuaa-auth/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/arc-mcp/xsuaa-auth/actions/workflows/codeql.yml/badge.svg)](https://github.com/arc-mcp/xsuaa-auth/actions/workflows/codeql.yml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/arc-mcp/xsuaa-auth/badge)](https://scorecard.dev/viewer/?uri=github.com/arc-mcp/xsuaa-auth)
-[![npm](https://img.shields.io/npm/v/arc-mcp-xsuaa-auth.svg)](https://www.npmjs.com/package/arc-mcp-xsuaa-auth)
+[![npm](https://img.shields.io/npm/v/@arc-mcp/xsuaa-auth.svg)](https://www.npmjs.com/package/@arc-mcp/xsuaa-auth)
 
 It gives an MCP server the SAP-native client→server auth stack: an **XSUAA OAuth proxy provider**, a stateless **RFC 7591 Dynamic Client Registration** store (HMAC-signed `client_id`s, restart-resilient), the OAuth-state callback codec that works around XSUAA's un-encoded `+` in `state`, a chained bearer verifier (**XSUAA → OIDC → API-key**, each optional), and a thin `setupHttpAuth` facade. A separate [`./btp`](#principal-propagation-btp) entrypoint adds **per-user principal propagation** via the BTP Destination Service + Cloud Connector.
 
@@ -18,7 +18,7 @@ Two API layers, same package: a **plug-and-play facade** for the common flow, an
 ## Install
 
 ```bash
-npm install arc-mcp-xsuaa-auth
+npm install @arc-mcp/xsuaa-auth
 ```
 
 ESM-only, Node **>= 22**. You also need these **peer dependencies** (the package shares the host's Express + MCP SDK instances rather than bundling its own):
@@ -46,7 +46,7 @@ The facade composes the standard XSUAA + DCR + callback + bearer flow and return
 
 ```ts
 import express from 'express';
-import { setupHttpAuth, loadXsuaaCredentials, resolveAppUrl } from 'arc-mcp-xsuaa-auth';
+import { setupHttpAuth, loadXsuaaCredentials, resolveAppUrl } from '@arc-mcp/xsuaa-auth';
 
 const app = express();
 app.use(express.json());
@@ -93,7 +93,7 @@ import {
   StatelessDcrClientStore,
   OAuthStateCodec,
   validateRedirectUri,
-} from 'arc-mcp-xsuaa-auth';
+} from '@arc-mcp/xsuaa-auth';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
 import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 
@@ -124,6 +124,8 @@ Each verifier accepts an optional injected **`expandScopes`** policy hook (defau
 
 Each verifier also accepts **`acceptedScopes`** (default the arc-1 set `['read','write','data','sql','transports','git','admin']`) — the scope-name allowlist applied to a token's claims. Override it (e.g. `['Viewer']`) when your scopes differ, or, via the facade, set `xsuaa.scopesSupported` (which the facade threads to both verifiers).
 
+`createOidcVerifier` additionally accepts **`fallbackScopes`** (default `[]`, **fail closed**) — the scopes granted when a *verified* OIDC token carries no accepted scope (no `scope`/`scp` claim, or claims that match none of `acceptedScopes`). The empty default means an IdP misconfigured to drop scope claims grants **no** access rather than silently falling back to read-only. Opt into the legacy read-only behavior with `fallbackScopes: ['read']` (via the facade, `oidc.fallbackScopes`). It is not run through `expandScopes`.
+
 ---
 
 ## `AuthOptions`
@@ -148,7 +150,7 @@ The facade's configuration object. All fields are optional except where noted.
 | `xsuaa.stateTtlSeconds` | `number` | `600` | OAuth-state token lifetime. `0` disables expiry. |
 | `xsuaa.dcrSigningSecret` | `string` | XSUAA `clientsecret` | Dedicated HMAC secret for DCR `client_id`s — set a ≥32-byte value so a `clientsecret` rotation doesn't invalidate cached client_ids. |
 | `xsuaa.callbackUrl` | `string` | `${appUrl}/oauth/callback` | This server's own OAuth callback URL sent to XSUAA as the redirect_uri (issue #214 callback proxy). Must match a `redirectUriPatterns` entry. |
-| `oidc` | `object` | — | `{ issuer, audience, clockToleranceSec?, algorithms?, scopeClaim? }`. Lazy-imports `jose`. `algorithms` defaults to `['RS256','ES256','PS256']`; `scopeClaim` overrides the primary scope-claim name (default `scope`). |
+| `oidc` | `object` | — | `{ issuer, audience, clockToleranceSec?, algorithms?, scopeClaim?, fallbackScopes? }`. Lazy-imports `jose`. `algorithms` defaults to `['RS256','ES256','PS256']`; `scopeClaim` overrides the primary scope-claim name (default `scope`); `fallbackScopes` (default `[]`, fail closed) is the scope set granted when a verified token carries no accepted scope — set `['read']` for legacy read-only fallback. |
 | `allowedOrigins` | `string[]` | — | Exact-match CORS allowlist (with `credentials`) for browser MCP clients. Unset = no CORS. |
 | `required` | `boolean` | `false` | `true` ⇒ throw if no method configured; `false` ⇒ warn + return `undefined` (open). |
 | `expandScopes` | `(scopes: string[]) => string[]` | identity | Injected scope-expansion policy, applied by every verifier. |
@@ -162,7 +164,7 @@ The facade's configuration object. All fields are optional except where noted.
 The `./btp` entrypoint maps the authenticated MCP user to their own SAP identity via the BTP Destination Service + Cloud Connector. The handoff from the auth layer is just the **raw, already-verified bearer JWT** (`authInfo.token`).
 
 ```ts
-import { resolveBTPDestination, lookupDestinationWithUserToken, parseVCAPServices } from 'arc-mcp-xsuaa-auth/btp';
+import { resolveBTPDestination, lookupDestinationWithUserToken, parseVCAPServices } from '@arc-mcp/xsuaa-auth/btp';
 
 // Technical (shared) destination — no per-user identity:
 const { url, username, password, client, proxy } = await resolveBTPDestination('SAP_TRIAL', logger);
