@@ -90,6 +90,6 @@
     "publint": "^0.3.0",
     "supertest": "^7.2.2",
     "typescript": "^6.0.3",
-    "vitest": "^3.0.0"
+    "vitest": "^4.1.9"
   }
 }
