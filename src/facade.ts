@@ -28,8 +28,8 @@ import { noopLogger } from './logger.js';
 import { createXsuaaOAuthProvider } from './oauth-provider.js';
 import type { ApiKeyEntry, ExpandScopes, Verifier } from './types.js';
 import { createChainedTokenVerifier, createOidcVerifier } from './verifiers.js';
-import { createXsuaaTokenVerifier } from './xsuaa.js';
 import type { XsuaaCredentials } from './xsuaa.js';
+import { createXsuaaTokenVerifier } from './xsuaa.js';
 
 /**
  * Facade configuration. See SPEC §6.

@@ -39,10 +39,10 @@ import type { OAuthClientInformationFull, OAuthRegisteredClientsStore } from './
 import type { Logger } from './logger.js';
 import { noopLogger } from './logger.js';
 import {
-  XSUAA_DEFAULT_REDIRECT_URIS,
-  XSUAA_DEFAULT_REDIRECT_URI_PATTERNS,
   matchesRedirectPattern,
   validateRedirectUri,
+  XSUAA_DEFAULT_REDIRECT_URI_PATTERNS,
+  XSUAA_DEFAULT_REDIRECT_URIS,
 } from './redirect-uris.js';
 
 // ─── Constants ────────────────────────────────────────────────────────

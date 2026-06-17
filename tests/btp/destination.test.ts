@@ -23,6 +23,7 @@ vi.stubGlobal('fetch', mockFetch);
 
 // Import AFTER mocking.
 const { lookupDestinationWithUserToken, resolveBTPDestination } = await import('../../src/btp.js');
+
 import type { BTPConfig } from '../../src/btp.js';
 
 /** A syntactically-valid (3-segment) but unsigned JWT for the SDK happy paths. */
