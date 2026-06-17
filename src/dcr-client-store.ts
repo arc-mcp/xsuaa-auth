@@ -246,7 +246,14 @@ export class StatelessDcrClientStore implements OAuthRegisteredClientsStore {
     if (client.client_name) payload.cn = client.client_name;
 
     const clientId = this.encode(payload);
-    const clientSecret = this.deriveSecret(clientId);
+    // RFC 7591 §2 / RFC 8252: a client registering with
+    // `token_endpoint_auth_method: 'none'` is a PUBLIC client (PKCE, no secret).
+    // The SDK's token-endpoint `authenticateClient` requires a secret whenever
+    // `getClient` reports one, so a public client MUST be issued none — otherwise
+    // its PKCE-only token exchange is rejected with "Client secret is required"
+    // (breaks Cursor / Eclipse / VS Code, which register as public + PKCE).
+    const isPublicClient = payload.am === 'none';
+    const clientSecret = isPublicClient ? undefined : this.deriveSecret(clientId);
 
     this.logger.debug('OAuth client registered (stateless)', {
       clientId,
@@ -267,7 +274,7 @@ export class StatelessDcrClientStore implements OAuthRegisteredClientsStore {
     // `client_secret` is issued. Value is the absolute expiry time in
     // seconds since epoch, OR exactly 0 if the secret never expires —
     // exactly the semantic ttlSeconds=0 introduces.
-    const clientSecretExpiresAt = this.ttlSeconds > 0 ? issuedAt + this.ttlSeconds : 0;
+    const clientSecretExpiresAt = isPublicClient ? undefined : this.ttlSeconds > 0 ? issuedAt + this.ttlSeconds : 0;
 
     return {
       ...client,
@@ -356,9 +363,14 @@ export class StatelessDcrClientStore implements OAuthRegisteredClientsStore {
   // ── Internals: encode / decode / sign / verify ──
 
   private payloadToClientInfo(clientId: string, payload: SignedPayload): OAuthClientInformationFull {
+    // Public clients (token_endpoint_auth_method 'none') carry no secret — see
+    // registerClient. getClient must report none too, or the SDK's token-endpoint
+    // clientAuth ("if client.client_secret → secret required") rejects the
+    // public client's PKCE-only exchange.
+    const isPublicClient = payload.am === 'none';
     return {
       client_id: clientId,
-      client_secret: this.deriveSecret(clientId),
+      client_secret: isPublicClient ? undefined : this.deriveSecret(clientId),
       client_id_issued_at: payload.iat,
       redirect_uris: payload.ru,
       grant_types: payload.gt ?? [...DEFAULT_GRANT_TYPES],

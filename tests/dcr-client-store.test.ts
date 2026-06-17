@@ -92,6 +92,32 @@ describe('StatelessDcrClientStore', () => {
     expect(fetched?.client_name).toBe('test-client');
   });
 
+  it('issues NO client_secret for a PUBLIC client (token_endpoint_auth_method: none)', async () => {
+    // Regression: the store used to derive a secret for every client. The SDK
+    // token endpoint then required it ("Client secret is required"), breaking
+    // public PKCE clients (Cursor / Eclipse / VS Code) that send no secret.
+    const store = makeStore();
+    const registered = await store.registerClient({
+      redirect_uris: ['http://127.0.0.1:33419/callback'],
+      grant_types: ['authorization_code', 'refresh_token'],
+      response_types: ['code'],
+      token_endpoint_auth_method: 'none',
+      client_name: 'pkce-public-client',
+    });
+
+    // Registration response must not advertise a secret.
+    expect(registered.client_secret).toBeUndefined();
+    expect(registered.client_secret_expires_at).toBeUndefined();
+    expect(registered.token_endpoint_auth_method).toBe('none');
+
+    // getClient (consumed by the SDK's clientAuth) must report no secret either,
+    // so the PKCE-only token exchange is accepted.
+    const fetched = await store.getClient(registered.client_id);
+    expect(fetched).toBeDefined();
+    expect(fetched?.client_secret).toBeUndefined();
+    expect(fetched?.token_endpoint_auth_method).toBe('none');
+  });
+
   it('survives a process-style restart: a fresh store with the same secret resolves prior IDs', async () => {
     const first = makeStore();
     const registered = await first.registerClient({
