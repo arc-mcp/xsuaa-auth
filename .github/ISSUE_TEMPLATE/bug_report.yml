@@ -1,0 +1,75 @@
+name: Bug report
+description: Report a defect in arc-mcp-xsuaa-auth
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. Please do **not** report security vulnerabilities here —
+        use [private vulnerability reporting](https://github.com/arc-mcp/xsuaa-auth/security/advisories/new) instead (see SECURITY.md).
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug, including the actual vs. expected behavior.
+      placeholder: When I call setupHttpAuth with ... I get ... but expected ...
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps (ideally a code snippet) that reproduce the issue.
+      placeholder: |
+        1. Configure AuthOptions as ...
+        2. Send a request with ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: dropdown
+    id: entrypoint
+    attributes:
+      label: Which entrypoint?
+      options:
+        - "'.' (core auth)"
+        - "'./btp' (principal propagation)"
+        - "Not sure"
+    validations:
+      required: true
+  - type: input
+    id: package-version
+    attributes:
+      label: "arc-mcp-xsuaa-auth version"
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: input
+    id: sdk-version
+    attributes:
+      label: "@modelcontextprotocol/sdk version"
+      placeholder: 1.28.0
+    validations:
+      required: true
+  - type: input
+    id: express-version
+    attributes:
+      label: express version
+      placeholder: 5.2.1
+    validations:
+      required: false
+  - type: input
+    id: node-version
+    attributes:
+      label: Node.js version
+      placeholder: 22.x
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs / errors
+      description: Paste any stack trace or log output. Redact tokens, client secrets, and JWTs.
+      render: shell
+    validations:
+      required: false

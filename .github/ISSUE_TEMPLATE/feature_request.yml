@@ -1,0 +1,46 @@
+name: Feature request
+description: Suggest an enhancement to arc-mcp-xsuaa-auth
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion. Note the package scope is intentionally small
+        (XSUAA/OAuth client→server auth + BTP principal propagation). Rate limiting,
+        scope/tool policy, and the SAP HTTP client are out of scope by design — see
+        [docs/SPEC.md §2 / §15](https://github.com/arc-mcp/xsuaa-auth/blob/main/docs/SPEC.md).
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / use case
+      description: What are you trying to do that the package doesn't support today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: The API or behavior you'd like. A sketch of the signature helps.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you evaluated, and why the proposal is preferable.
+    validations:
+      required: false
+  - type: dropdown
+    id: consumer
+    attributes:
+      label: Which consumer needs this?
+      multiple: true
+      options:
+        - arc-1
+        - calmcp
+        - LISA
+        - A new MCP server
+        - Other
+    validations:
+      required: false

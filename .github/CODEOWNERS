@@ -1,0 +1,12 @@
+# Code owners for @arc-mcp/xsuaa-auth.
+# These owners are requested for review automatically. The CI/release config and
+# the auth source are the security-sensitive surface and are owned explicitly.
+
+# Default owner for everything.
+*                       @marianfoo
+
+# CI, release, and security workflows — changes here affect supply-chain posture.
+/.github/               @marianfoo
+
+# Auth source — the security-sensitive core.
+/src/                   @marianfoo

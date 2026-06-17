@@ -1,0 +1,59 @@
+# OpenSSF Scorecard — automated supply-chain security posture scan.
+# Publishes results to the GitHub code-scanning dashboard and (optionally) the
+# public OpenSSF REST API so the repo can display a Scorecard badge.
+# https://github.com/ossf/scorecard-action
+
+name: Scorecard
+
+on:
+  # Re-scan when branch-protection / security settings change.
+  branch_protection_rule:
+  # Weekly baseline scan.
+  schedule:
+    - cron: '27 5 * * 1'
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Top-level: read-only. The scan job elevates only what it needs.
+permissions: read-all
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    permissions:
+      # Upload SARIF results to the code-scanning dashboard.
+      security-events: write
+      # Read the (often private) branch-protection settings.
+      contents: read
+      actions: read
+      # Mint the OIDC token for publishing to the public Scorecard API.
+      id-token: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Run analysis
+        uses: ossf/scorecard-action@4eaacf0543bb3f2c246792bd56e8cdeffafb205a  # v2.4.3
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          # publish_results: true lets the OpenSSF maintain a public badge and
+          # feed the Scorecard API. Requires the id-token: write permission above.
+          publish_results: true
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: SARIF file
+          path: results.sarif
+          retention-days: 5
+
+      - name: Upload to code-scanning
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: results.sarif
+          category: scorecard

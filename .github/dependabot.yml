@@ -1,0 +1,77 @@
+# Dependabot configuration for arc-mcp-xsuaa-auth.
+# Two ecosystems: npm (library + dev deps) and github-actions (CI/release).
+# Schedule: weekly. Security advisories are handled separately by Dependabot's
+# security-updates feature (enable in repo Settings → Advanced Security).
+
+version: 2
+updates:
+  # ─── npm dependencies ────────────────────────────────────────────────────
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/Berlin"
+    open-pull-requests-limit: 10
+    versioning-strategy: "increase"
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - "dependencies"
+    groups:
+      # Bundle dev-only minor + patch updates into a single PR — low review cost.
+      dev-dependencies:
+        dependency-type: "development"
+        update-types:
+          - "minor"
+          - "patch"
+      # @types/* packages are noisy — group them so they don't clutter the PR list.
+      types:
+        patterns:
+          - "@types/*"
+      # SAP SDKs change together; review as a unit.
+      sap-sdk:
+        patterns:
+          - "@sap/*"
+          - "@sap-cloud-sdk/*"
+      # MCP SDK updates often touch protocol/auth behavior — review as a unit.
+      mcp-sdk:
+        patterns:
+          - "@modelcontextprotocol/*"
+      # Biome (linter) bumps need the biome.json $schema URL bumped too.
+      linting:
+        patterns:
+          - "@biomejs/*"
+          - "biome"
+    ignore:
+      # @types/node major must match `engines.node` minimum (currently `>=22`),
+      # not Node's latest release line. A newer major surfaces APIs that don't
+      # exist on the minimum supported runtime. Bump it in the same PR that
+      # bumps engines.node.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+      # @modelcontextprotocol/sdk and express are PEER deps with deliberately
+      # wide supported ranges (SPEC §4); the dev pin is just one in-range point.
+      # A Dependabot bump of the dev pin doesn't change what we support and can
+      # mask peer-floor breakage — let the CI peer-matrix drive these instead.
+      - dependency-name: "@modelcontextprotocol/sdk"
+      - dependency-name: "express"
+
+  # ─── GitHub Actions ──────────────────────────────────────────────────────
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/Berlin"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - "dependencies"
+    groups:
+      actions:
+        patterns:
+          - "*"

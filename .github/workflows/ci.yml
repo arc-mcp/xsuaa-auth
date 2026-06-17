@@ -1,0 +1,129 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Minimum required GITHUB_TOKEN permissions. All jobs only read the repo.
+permissions:
+  contents: read
+
+jobs:
+  # Primary gate: lint, typecheck, test, build, and the publint/attw export
+  # check, on every supported Node line. This is what a PR must pass.
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [22, 24]
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Block PRs that introduce known HIGH/CRITICAL advisories. Audits prod AND
+      # dev deps — a compromised dev dep can poison the published artifact.
+      - name: Security audit (npm audit)
+        run: npm audit --audit-level=high
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      # publint + are-the-types-wrong (ESM-only profile): catches a broken
+      # exports map, missing/mis-shaped .d.ts, or a CJS/ESM resolution gap
+      # before publish.
+      - name: Check package exports (publint + attw)
+        run: npm run check:exports
+
+  # Peer compatibility matrix (SPEC §4): run the full test suite against the
+  # supported @modelcontextprotocol/sdk × express combinations so a peer bump in
+  # a consumer can't silently break us. The build job above covers Node 22/24 at
+  # the in-range dev versions; this job fixes Node 22 and varies the peers.
+  #   1.18.2 + 5.0.1  → floor (first SDK with mcpAuthRouter resourceServerUrl)
+  #   1.25.3 + 5.0.1  → last SDK before it hard-bumped express to ^5.2.1
+  #   1.28.x + 5.2.1  → current prod (arc-1 / calmcp)
+  #   1.29.x + 5.2.1  → latest
+  peer-matrix:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - sdk: '1.18.2'
+            express: '5.0.1'
+          - sdk: '1.25.3'
+            express: '5.0.1'
+          - sdk: '1.28'
+            express: '5.2.1'
+          - sdk: '1.29'
+            express: '5.2.1'
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Pin peers (@modelcontextprotocol/sdk@${{ matrix.sdk }} + express@${{ matrix.express }})
+        run: npm install --no-save --no-audit --no-fund "@modelcontextprotocol/sdk@${{ matrix.sdk }}" "express@${{ matrix.express }}"
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Run tests
+        run: npm test
+
+  # Peer-floor regression guard: pin the *lowest supported* peer versions
+  # (@modelcontextprotocol/sdk 1.18.2 — first version exposing
+  # mcpAuthRouter({ resourceServerUrl }) — and express 5.0.1) and typecheck.
+  # Excess-property / API-shape errors against the floor surface only here;
+  # the build matrix runs against the in-range dev versions (SDK 1.28 / express 5.2).
+  peer-floor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Override the peer/dev versions with the declared floor, without touching
+      # package.json. --no-save keeps the lockfile clean; the resolved versions
+      # are what `tsc` then type-checks against.
+      - name: Pin peer floor (@modelcontextprotocol/sdk@1.18.2 + express@5.0.1)
+        run: npm install --no-save --no-audit --no-fund @modelcontextprotocol/sdk@1.18.2 express@5.0.1
+
+      - name: Type check against peer floor
+        run: npm run typecheck
