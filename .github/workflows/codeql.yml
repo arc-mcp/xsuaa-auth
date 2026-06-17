@@ -41,6 +41,14 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           queries: security-extended
+          # scripts/ is non-shipped local dev tooling (e.g. live-xsuaa-check.mjs,
+          # which reads the maintainer's own service key to probe XSUAA — that is
+          # its purpose). The published surface is src/ → dist/, so exclude
+          # scripts/ from SAST to drop false positives (js/file-access-to-http)
+          # on dev utilities. src/ + tests/ stay fully analyzed.
+          config: |
+            paths-ignore:
+              - scripts
 
       - name: Autobuild
         uses: github/codeql-action/autobuild@v4
