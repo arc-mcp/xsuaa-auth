@@ -11,7 +11,7 @@ It gives an MCP server the SAP-native client→server auth stack: an **XSUAA OAu
 
 Two API layers, same package: a **plug-and-play facade** for the common flow, and the **building blocks** it composes for full control.
 
-> Extracted from [arc-1](https://github.com/marianfoo/arc-1)'s production auth stack and designed so arc-1, calmcp, and LISA can adopt it with a minimal diff. The full design rationale is frozen in [`docs/SPEC.md`](./docs/SPEC.md) and [`docs/RESEARCH.md`](./docs/RESEARCH.md).
+> Extracted from [arc-1](https://github.com/marianfoo/arc-1)'s production auth stack and designed so arc-1, calmcp, and LISA can adopt it with a minimal diff. The full design rationale is frozen in [`docs/SPEC.md`](https://github.com/arc-mcp/xsuaa-auth/blob/main/docs/SPEC.md) and [`docs/RESEARCH.md`](https://github.com/arc-mcp/xsuaa-auth/blob/main/docs/RESEARCH.md).
 
 ---
 
@@ -134,7 +134,7 @@ The facade's configuration object. All fields are optional except where noted.
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
-| `apiKeys` | `string \| ApiKeyEntry[]` | — | A single static key, or `[{ key, scopes?, clientId? }]`. Matched in constant time. |
+| `apiKeys` | `string \| ApiKeyEntry[]` | — | A single static key, or `[{ key, scopes?, clientId? }]`. Matched in constant time. **A bare string key grants `scopes: []`** — it authenticates but fails any `requiredScopes`; use `[{ key, scopes: [...] }]` to grant scopes. |
 | `xsuaa` | `object` | — | Present ⇒ XSUAA OAuth proxy is mounted (see sub-fields below). Omit for API-key/OIDC-only. |
 | `xsuaa.credentials` | `XsuaaCredentials` | **required** | `{ url, clientid, clientsecret, xsappname, uaadomain, verificationkey? }`. Use `loadXsuaaCredentials()`. |
 | `xsuaa.appUrl` | `string` | **required** | Public URL the OAuth metadata advertises. Use `resolveAppUrl()`. |
@@ -150,7 +150,7 @@ The facade's configuration object. All fields are optional except where noted.
 | `xsuaa.stateTtlSeconds` | `number` | `600` | OAuth-state token lifetime. `0` disables expiry. |
 | `xsuaa.dcrSigningSecret` | `string` | XSUAA `clientsecret` | Dedicated HMAC secret for DCR `client_id`s — set a ≥32-byte value so a `clientsecret` rotation doesn't invalidate cached client_ids. |
 | `xsuaa.callbackUrl` | `string` | `${appUrl}/oauth/callback` | This server's own OAuth callback URL sent to XSUAA as the redirect_uri (issue #214 callback proxy). Must match a `redirectUriPatterns` entry. |
-| `oidc` | `object` | — | `{ issuer, audience, clockToleranceSec?, algorithms?, scopeClaim?, fallbackScopes? }`. Lazy-imports `jose`. `algorithms` defaults to `['RS256','ES256','PS256']`; `scopeClaim` overrides the primary scope-claim name (default `scope`); `fallbackScopes` (default `[]`, fail closed) is the scope set granted when a verified token carries no accepted scope — set `['read']` for legacy read-only fallback. |
+| `oidc` | `object` | — | `{ issuer, audience, clockToleranceSec?, algorithms?, scopeClaim?, acceptedScopes?, fallbackScopes? }`. Lazy-imports `jose`. `algorithms` defaults to `['RS256','ES256','PS256']`; `scopeClaim` overrides the primary scope-claim name (default `scope`); `acceptedScopes` is the scope-name allowlist for **OIDC-only** deployments with custom scope names (defaults to `xsuaa.scopesSupported`, else the arc-1 set); `fallbackScopes` (default `[]`, fail closed) is the scope set granted when a verified token carries no accepted scope — set `['read']` for legacy read-only fallback. |
 | `allowedOrigins` | `string[]` | — | Exact-match CORS allowlist (with `credentials`) for browser MCP clients. Unset = no CORS. |
 | `required` | `boolean` | `false` | `true` ⇒ throw if no method configured; `false` ⇒ warn + return `undefined` (open). |
 | `expandScopes` | `(scopes: string[]) => string[]` | identity | Injected scope-expansion policy, applied by every verifier. |
@@ -209,7 +209,7 @@ You don't need to do this yourself — the package handles XSUAA validation inte
 
 By design, the package's job ends at producing `AuthInfo` + the raw bearer token (and, via `./btp`, destination credentials). These stay with the consuming server:
 
-- **Rate limiting** — per-IP and per-user limiters are deferred (see [`docs/SPEC.md §14`](./docs/SPEC.md)); each consumer keeps its own for now.
+- **Rate limiting** — per-IP and per-user limiters are deferred (see [`docs/SPEC.md §14`](https://github.com/arc-mcp/xsuaa-auth/blob/main/docs/SPEC.md)); each consumer keeps its own for now.
 - **Scope / tool policy** — `expandScopes` is an injected hook; the package owns no `ACTION_POLICY` or scope semantics.
 - **The MCP transport** — you own `/mcp` (stdio / Streamable HTTP); the package contributes middleware + the OAuth router.
 - **The SAP HTTP client** — header assembly, CSRF, cookies, stateful sessions, and the forward-proxy request are yours.
@@ -220,8 +220,8 @@ By design, the package's job ends at producing `AuthInfo` + the raw bearer token
 
 ## Documentation
 
-- **[`docs/SPEC.md`](./docs/SPEC.md)** — the frozen API contract: every public signature, the dependency ranges, the logger contract, the auth↔PP coupling, and the adoption path for each consumer.
-- **[`docs/RESEARCH.md`](./docs/RESEARCH.md)** — extraction research, the three-way (arc-1 / calmcp / LISA) reality check, and the Architecture Decision Records.
+- **[`docs/SPEC.md`](https://github.com/arc-mcp/xsuaa-auth/blob/main/docs/SPEC.md)** — the frozen API contract: every public signature, the dependency ranges, the logger contract, the auth↔PP coupling, and the adoption path for each consumer.
+- **[`docs/RESEARCH.md`](https://github.com/arc-mcp/xsuaa-auth/blob/main/docs/RESEARCH.md)** — extraction research, the three-way (arc-1 / calmcp / LISA) reality check, and the Architecture Decision Records.
 - **[`SECURITY.md`](./SECURITY.md)** — vulnerability reporting + the security-relevant configuration knobs.
 
 ### A note on the logger

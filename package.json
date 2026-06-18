@@ -40,7 +40,10 @@
     "./package.json": "./package.json"
   },
   "files": [
-    "dist"
+    "dist",
+    "examples",
+    "SECURITY.md",
+    "CHANGELOG.md"
   ],
   "publishConfig": {
     "access": "public"
