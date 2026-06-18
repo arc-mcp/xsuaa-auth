@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.3](https://github.com/arc-mcp/xsuaa-auth/compare/v0.1.2...v0.1.3) (2026-06-18)
+
+
+### Features
+
+* **facade:** add oidc.acceptedScopes for OIDC-only deployments ([#14](https://github.com/arc-mcp/xsuaa-auth/issues/14)) ([35a9364](https://github.com/arc-mcp/xsuaa-auth/commit/35a9364b6e6a6b579bfd73811ce53f66ab8873e7))
+
 ## [0.1.2](https://github.com/arc-mcp/xsuaa-auth/compare/v0.1.1...v0.1.2) (2026-06-17)
 
 
