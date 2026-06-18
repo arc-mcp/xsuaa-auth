@@ -1,7 +1,9 @@
 # Auth Module — Implementation Plan
 
+> ⚠️ **HISTORICAL / SUPERSEDED (2026-06-18).** This plan captured the *original* local-only build constraints, which no longer hold: the package is published as **`@arc-mcp/xsuaa-auth`** (repo `arc-mcp/xsuaa-auth`) and arc-1 adopted it via [PR #456](https://github.com/marianfoo/arc-1/pull/456) (merged). [`SPEC.md`](./SPEC.md) is the authoritative contract; this doc is retained for history only.
+
 > **Refs:** [`SPEC.md`](./SPEC.md) (frozen contract), [`RESEARCH.md`](./RESEARCH.md) (rationale).
-> **Hard constraints:** build + test **locally only** — **no GitHub repo**, no publish. **No auth-replacement PR in arc-1** (integration is a local worktree validation). The **only** arc-1 PR is the research + spec docs, at the very end.
+> **Original hard constraints (NO LONGER APPLY — see banner above):** build + test locally only, no GitHub repo, no publish, no auth-replacement PR in arc-1.
 
 ## 0. Phases & gates
 

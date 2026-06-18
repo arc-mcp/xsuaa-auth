@@ -48,7 +48,10 @@ export interface PerUserAuthTokens {
   sapConnectivityAuth?: string;
   /** Any Bearer token returned by the Destination Service */
   bearerToken?: string;
-  /** PP Option 1: jwt-bearer exchanged token for Proxy-Authorization (recommended approach) */
+  /** PP "Option 1" (jwt-bearer → Proxy-Authorization). RESERVED / not yet produced
+   *  by `lookupDestinationWithUserToken`: on a successful per-user lookup this
+   *  package sets `sapConnectivityAuth` (Bearer <verified user JWT>), never this
+   *  field. A consumer implementing the jwt-bearer exchange assigns it itself. */
   ppProxyAuth?: string;
 }
 
