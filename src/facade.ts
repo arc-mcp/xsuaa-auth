@@ -67,6 +67,11 @@ export interface AuthOptions {
     algorithms?: string[];
     /** Override the primary scope-claim name (default `scope`). */
     scopeClaim?: string;
+    /** Scope names recognised on a verified OIDC token (others are dropped).
+     *  Defaults to `xsuaa.scopesSupported`, else the built-in arc-1 set. Set
+     *  this for an OIDC-only deployment whose IdP emits custom scope names
+     *  (without also having to configure `xsuaa`). */
+    acceptedScopes?: string[];
     /** Scopes granted when a verified OIDC token carries no accepted scope.
      *  Defaults to `[]` (fail closed). Set `['read']` to opt into legacy
      *  read-only fallback under IdP scope-claim misconfiguration. */
@@ -132,7 +137,9 @@ export function setupHttpAuth(
         clockToleranceSec: options.oidc.clockToleranceSec,
         algorithms: options.oidc.algorithms,
         scopeClaim: options.oidc.scopeClaim,
-        acceptedScopes,
+        // OIDC-only deployments set oidc.acceptedScopes directly; otherwise fall
+        // back to the xsuaa-advertised set (or the verifier's built-in default).
+        acceptedScopes: options.oidc.acceptedScopes ?? acceptedScopes,
         fallbackScopes: options.oidc.fallbackScopes,
         expandScopes,
         logger,

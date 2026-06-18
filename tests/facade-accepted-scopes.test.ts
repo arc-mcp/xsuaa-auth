@@ -84,6 +84,28 @@ describe('setupHttpAuth — M2 acceptedScopes threading', () => {
     expect(createXsuaaTokenVerifier.mock.calls[0][1]).toMatchObject({ acceptedScopes: undefined });
     expect(createOidcVerifier.mock.calls[0][2]).toMatchObject({ acceptedScopes: undefined });
   });
+
+  it('passes oidc.acceptedScopes to the OIDC verifier in OIDC-only mode (no xsuaa)', () => {
+    const app = express();
+    app.use(express.urlencoded({ extended: true }));
+    setupHttpAuth(app, {
+      oidc: { issuer: 'https://issuer.example.com', audience: 'aud', acceptedScopes: ['Viewer', 'Editor'] },
+    });
+    expect(createXsuaaTokenVerifier).not.toHaveBeenCalled();
+    expect(createOidcVerifier.mock.calls[0][2]).toMatchObject({ acceptedScopes: ['Viewer', 'Editor'] });
+  });
+
+  it('oidc.acceptedScopes overrides xsuaa.scopesSupported for the OIDC verifier only', () => {
+    const app = express();
+    app.use(express.urlencoded({ extended: true }));
+    setupHttpAuth(app, {
+      xsuaa: { credentials: XSUAA_CREDS, appUrl: APP_URL, scopesSupported: ['Viewer'] },
+      oidc: { issuer: 'https://issuer.example.com', audience: 'aud', acceptedScopes: ['Editor'] },
+    });
+    // XSUAA keeps its own advertised set; OIDC uses its explicit override.
+    expect(createXsuaaTokenVerifier.mock.calls[0][1]).toMatchObject({ acceptedScopes: ['Viewer'] });
+    expect(createOidcVerifier.mock.calls[0][2]).toMatchObject({ acceptedScopes: ['Editor'] });
+  });
 });
 
 describe('setupHttpAuth — S6 scopeClaim + callbackUrl threading', () => {
