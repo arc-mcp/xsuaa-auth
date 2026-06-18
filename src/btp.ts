@@ -20,3 +20,4 @@ export type { Destination, PerUserAuthTokens } from './btp/destination.js';
 export { lookupDestination, lookupDestinationWithUserToken, resolveBTPDestination } from './btp/destination.js';
 export type { BTPConfig } from './btp/vcap.js';
 export { parseVCAPServices } from './btp/vcap.js';
+export type { Logger } from './logger.js';

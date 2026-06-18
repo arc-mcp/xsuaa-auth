@@ -47,6 +47,7 @@ vi.mock('@sap/xssec', () => {
 // Import AFTER the mock is registered.
 const { createXsuaaTokenVerifier, qualifyXsuaaScopes, RESERVED_OAUTH_SCOPES } = await import('../src/index.js');
 
+import { InvalidTokenError } from '../src/internal/sdk.js';
 import { makeCapturingLogger } from './helpers/test-logger.js';
 
 const CREDS = {
@@ -177,6 +178,13 @@ describe('createXsuaaTokenVerifier (@sap/xssec mocked)', () => {
     // acceptedScopes:['Viewer'] → checkLocalScope('Viewer') is probed and granted.
     const viewerVerify = createXsuaaTokenVerifier(CREDS, { acceptedScopes: ['Viewer'] });
     expect((await viewerVerify('jwt')).scopes).toEqual(['Viewer']);
+  });
+
+  // ── Normalize @sap/xssec validation failures to InvalidTokenError (→ 401) ──
+  it('rejects with InvalidTokenError (not the raw xssec error) when createSecurityContext throws', async () => {
+    createSecurityContextMock.mockRejectedValueOnce(new Error('xssec: signature verification failed'));
+    const verify = createXsuaaTokenVerifier(CREDS);
+    await expect(verify('bad-jwt')).rejects.toBeInstanceOf(InvalidTokenError);
   });
 
   // ── S3: never log email / userName (PII) ──

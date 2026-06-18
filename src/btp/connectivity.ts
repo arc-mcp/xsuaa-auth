@@ -12,7 +12,7 @@ import { type BTPConfig, fetchClientCredentialsToken } from './vcap.js';
 
 // ─── Types ───────────────────────────────────────────────────────────
 
-/** Proxy configuration for undici ProxyAgent — used by the consumer's HTTP client */
+/** Proxy configuration descriptor for the consumer's HTTP client / proxy agent */
 export interface BTPProxyConfig {
   host: string;
   port: number;

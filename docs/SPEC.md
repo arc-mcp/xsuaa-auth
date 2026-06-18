@@ -99,6 +99,10 @@ export interface Logger {
 export type { AuthInfo, OAuthClientInformationFull } from './internal/sdk.js';
 export type Verifier = (token: string) => Promise<AuthInfo>;
 
+// ─── Logger contract (§5) ───
+export type { Logger } from './logger.js';
+export const noopLogger: Logger;   // default no-op logger injected when a consumer provides none
+
 // ─── XSUAA binding ───
 export interface XsuaaCredentials {
   url: string; clientid: string; clientsecret: string;
@@ -180,6 +184,8 @@ export function createChainedTokenVerifier(   // does NOT re-apply expandScopes 
   options?: { expandScopes?: ExpandScopes; logger?: Logger },
 ): Verifier;
 export function qualifyXsuaaScopes(scopes: string[], xsappname: string): string[];
+export const DEFAULT_ACCEPTED_SCOPES: string[];   // the arc-1 scope set ['read','write','data','sql','transports','git','admin']; default acceptedScopes for the XSUAA + OIDC verifiers
+export const RESERVED_OAUTH_SCOPES: Set<string>;   // OIDC/UAA scopes never xsappname-prefixed by qualifyXsuaaScopes (openid/profile/email/offline_access)
 
 // ─── OAuth callback handler (the #214 proxy second half) ───
 export function createOAuthCallbackHandler(
@@ -241,7 +247,7 @@ export interface Destination {
 export interface BTPProxyConfig { host: string; port: number; protocol: string; getProxyToken: () => Promise<string>; locationId?: string }
 export interface PerUserAuthTokens { sapConnectivityAuth?: string; bearerToken?: string; ppProxyAuth?: string }
 
-export function parseVCAPServices(env?: NodeJS.ProcessEnv): BTPConfig | null;   // env defaults to process.env
+export function parseVCAPServices(env?: NodeJS.ProcessEnv, logger?: Logger): BTPConfig | null;   // env defaults to process.env; logger defaults to no-op
 export function lookupDestination(btpConfig: BTPConfig, name: string, logger?: Logger): Promise<Destination>;
 export function lookupDestinationWithUserToken(            // ← the PP primitive
   btpConfig: BTPConfig, name: string, userJwt: string, logger?: Logger,

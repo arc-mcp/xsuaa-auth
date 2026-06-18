@@ -142,6 +142,19 @@ describe('createOAuthCallbackHandler — issue #214 round-trip', () => {
     expect(new URL(res.headers.location as string).searchParams.has('state')).toBe(false);
   });
 
+  it('returns 400 (not a 302 with empty code=) for a valid state but neither code nor error', async () => {
+    const codec = new OAuthStateCodec(SECRET);
+    const token = codec.encode({
+      clientState: 'st+ate==',
+      clientRedirectUri: 'http://127.0.0.1:33418/',
+      clientId: TEST_CLIENT_ID,
+    });
+    const res = await request(buildApp(codec)).get('/oauth/callback').query({ state: token });
+    expect(res.status).toBe(400);
+    expect(res.headers.location).toBeUndefined();
+    expect(res.text).toContain('Authentication failed');
+  });
+
   it('returns 400 (no open redirect) for an invalid/forged state token', async () => {
     const codec = new OAuthStateCodec(SECRET);
     const res = await request(buildApp(codec))
