@@ -36,7 +36,12 @@ export {
 // ─── Shared public types ─────────────────────────────────────────────
 export type { ApiKeyEntry, ExpandScopes, Verifier } from './types.js';
 // ─── Verifiers ───────────────────────────────────────────────────────
-export { createApiKeyVerifier, createChainedTokenVerifier, createOidcVerifier } from './verifiers.js';
+export {
+  createApiKeyVerifier,
+  createChainedTokenVerifier,
+  createOidcVerifier,
+  DEFAULT_ACCEPTED_SCOPES,
+} from './verifiers.js';
 // ─── XSUAA binding + token verifier + scope helpers ──────────────────
 export type { XsuaaCredentials } from './xsuaa.js';
 export { createXsuaaTokenVerifier, qualifyXsuaaScopes, RESERVED_OAUTH_SCOPES } from './xsuaa.js';

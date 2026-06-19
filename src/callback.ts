@@ -189,10 +189,27 @@ export function createOAuthCallbackHandler(
       return;
     }
 
+    // A callback with a valid state but neither `code` nor `error` is malformed —
+    // the IdP must return exactly one. Don't redirect the client with an empty
+    // `code=`; fail with a terminal error instead.
+    const code = typeof req.query.code === 'string' ? req.query.code : '';
+    if (!code) {
+      logger.warn('OAuth callback: no authorization code and no error in the callback');
+      res
+        .status(400)
+        .type('html')
+        .send(
+          '<!doctype html><html><body style="font-family:sans-serif;padding:2rem">' +
+            '<h1>Authentication failed</h1>' +
+            '<p>The sign-in response was missing an authorization code. Please retry the sign-in.</p>' +
+            '</body></html>',
+        );
+      return;
+    }
+
     // Success: forward the authorization code, re-attaching the client's ORIGINAL
     // state. URLSearchParams serialization encodes `+` as `%2B`, which is exactly
     // what fixes the round-trip (issue #214).
-    const code = typeof req.query.code === 'string' ? req.query.code : '';
     target.searchParams.set('code', code);
     if (decoded.clientState !== undefined) {
       target.searchParams.set('state', decoded.clientState);

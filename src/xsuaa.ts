@@ -16,7 +16,7 @@
  */
 
 import xssec from '@sap/xssec';
-import type { AuthInfo } from './internal/sdk.js';
+import { type AuthInfo, InvalidTokenError } from './internal/sdk.js';
 import type { Logger } from './logger.js';
 import { noopLogger } from './logger.js';
 import type { ExpandScopes, Verifier } from './types.js';
@@ -70,7 +70,18 @@ export function createXsuaaTokenVerifier(
 
   return async (token: string): Promise<AuthInfo> => {
     logger.debug('XSUAA token verification: creating security context');
-    const securityContext = await xsuaaService.createSecurityContext(token, { jwt: token });
+    // Normalize @sap/xssec validation failures to InvalidTokenError so a rejected
+    // token maps to a 401 under requireBearerAuth (matching the OIDC + api-key
+    // verifiers) instead of escaping as a 500 when this verifier is used directly.
+    let securityContext: Awaited<ReturnType<typeof xsuaaService.createSecurityContext>>;
+    try {
+      securityContext = await xsuaaService.createSecurityContext(token, { jwt: token });
+    } catch (err) {
+      logger.debug('XSUAA token validation failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw new InvalidTokenError('XSUAA token validation failed');
+    }
 
     // Extract scopes (remove xsappname prefix for local scope names).
     // The token carries scopes like "arc1-mcp!b12345.read"; checkLocalScope strips
