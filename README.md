@@ -177,10 +177,19 @@ const { destination, authTokens } = await lookupDestinationWithUserToken(
   authInfo.token,    // the verified bearer JWT (guarded: must be a 3-segment JWT, not an API key)
   logger,
 );
-// authTokens: { sapConnectivityAuth?, bearerToken?, ppProxyAuth? }
+// authTokens: { sapConnectivityAuth?, bearerToken?, ppProxyAuth?, samlAssertionAuthorization? }
 ```
 
 **The package returns credentials + a proxy descriptor; it never applies them.** Your SAP HTTP client owns header assembly (`Authorization` / `SAP-Connectivity-Authentication` / `Proxy-Authorization`) and the forward-proxy request. What to do when no PP token is produced (throw vs. fall back to BasicAuth) is **your** policy.
+
+Which `PerUserAuthTokens` field is populated depends on the destination's `Authentication` type (they're mutually exclusive). Apply whichever one is set:
+
+| `PerUserAuthTokens` field | Destination `Authentication` | Apply as |
+|---|---|---|
+| `sapConnectivityAuth` | `PrincipalPropagation` (Cloud Connector) | `SAP-Connectivity-Authentication` header, alongside `Proxy-Authorization` from the connectivity proxy |
+| `bearerToken` | `OAuth2UserTokenExchange` / `OAuth2SAMLBearerAssertion` | `Authorization: Bearer <bearerToken>` |
+| `samlAssertionAuthorization` | `SAMLAssertion` (e.g. S/4HANA Public Cloud developer extensibility — the same flow [SAP Business Application Studio](https://help.sap.com/docs/bas) uses) | `Authorization: <value>` **verbatim** (already prefixed, e.g. `SAML2.0 …`), alongside `x-sap-security-session: create` |
+| `ppProxyAuth` | — | Reserved (jwt-bearer "Option 1" → `Proxy-Authorization`); never produced by `lookupDestinationWithUserToken`, a consumer assigns it itself |
 
 | Export | Purpose |
 |--------|---------|

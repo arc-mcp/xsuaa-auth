@@ -201,6 +201,33 @@ describe('lookupDestinationWithUserToken', () => {
     expect(result.authTokens.bearerToken).toBe('header-only-token');
   });
 
+  // ── Shape 2b: SAMLAssertion → ready-to-use Authorization header value ──
+  it('returns the SAMLAssertion Authorization header value for SAMLAssertion destinations (S/4HC, BAS flow)', async () => {
+    mockGetDestination.mockResolvedValueOnce({
+      name: 'S4HC_PP',
+      url: 'https://my.s4hana.cloud.sap',
+      authentication: 'SAMLAssertion',
+      proxyType: 'Internet',
+      username: '',
+      password: '',
+      authTokens: [
+        {
+          type: 'SAML2.0',
+          value: '',
+          error: null,
+          http_header: { key: 'Authorization', value: 'SAML2.0 ass=base64assertion' },
+        },
+      ],
+    });
+
+    const result = await lookupDestinationWithUserToken(TEST_BTP_CONFIG, 'S4HC_PP', USER_JWT);
+    expect(result.destination.Authentication).toBe('SAMLAssertion');
+    expect(result.authTokens.samlAssertionAuthorization).toBe('SAML2.0 ass=base64assertion');
+    // Mutually exclusive with the other per-user credential shapes.
+    expect(result.authTokens.bearerToken).toBeUndefined();
+    expect(result.authTokens.sapConnectivityAuth).toBeUndefined();
+  });
+
   it('throws on an auth-token error from the Destination Service', async () => {
     mockGetDestination.mockResolvedValueOnce({
       name: 'SAP_TRIAL',
