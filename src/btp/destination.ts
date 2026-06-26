@@ -53,6 +53,11 @@ export interface PerUserAuthTokens {
    *  package sets `sapConnectivityAuth` (Bearer <verified user JWT>), never this
    *  field. A consumer implementing the jwt-bearer exchange assigns it itself. */
   ppProxyAuth?: string;
+  /** SAMLAssertion flow (e.g. S/4HANA Public Cloud developer extensibility, the same flow BAS
+   *  uses): the ready-to-use `Authorization` header value (e.g. "SAML2.0 …") returned by the
+   *  Destination Service. The consumer sends it verbatim as `Authorization`, alongside
+   *  `x-sap-security-session: create` (mirrors the SAP Cloud SDK's SAMLAssertion handling). */
+  samlAssertionAuthorization?: string;
 }
 
 // ─── Destination Service ─────────────────────────────────────────────
@@ -255,6 +260,22 @@ export async function lookupDestinationWithUserToken(
     });
   }
 
+  // SAMLAssertion flow (e.g. S/4HANA Public Cloud developer extensibility — same flow BAS uses).
+  // The Destination Service returns the assertion as a ready-to-use Authorization header value; the
+  // SAP Cloud SDK uses the first non-error token's `http_header.value` for this type (see
+  // @sap-cloud-sdk/connectivity authorization-header.ts → headerFromTokens). We surface it so the
+  // consumer can send it verbatim as Authorization + `x-sap-security-session: create`.
+  if (dest.Authentication === 'SAMLAssertion' && !tokens.sapConnectivityAuth && !tokens.bearerToken) {
+    const usable = sdkAuthTokens?.find((token) => !token.error && token.http_header?.value);
+    if (usable?.http_header?.value) {
+      tokens.samlAssertionAuthorization = usable.http_header.value;
+      logger.debug('PP: SAMLAssertion Authorization header extracted', {
+        destination: destinationName,
+        headerValueLength: usable.http_header.value.length,
+      });
+    }
+  }
+
   // ─── PP jwt-bearer fallback (Option 2) ─────────────────────────────
   //
   // Background: The BTP Destination Service SHOULD return authTokens containing
@@ -333,6 +354,7 @@ export async function lookupDestinationWithUserToken(
     auth: dest.Authentication,
     hasConnectivityAuth: !!tokens.sapConnectivityAuth,
     hasBearer: !!tokens.bearerToken,
+    hasSamlAssertion: !!tokens.samlAssertionAuthorization,
   });
 
   return { destination: dest, authTokens: tokens };

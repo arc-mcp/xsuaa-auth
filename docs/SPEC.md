@@ -245,7 +245,7 @@ export interface Destination {
   'sap-client'?: string; CloudConnectorLocationId?: string;
 }
 export interface BTPProxyConfig { host: string; port: number; protocol: string; getProxyToken: () => Promise<string>; locationId?: string }
-export interface PerUserAuthTokens { sapConnectivityAuth?: string; bearerToken?: string; ppProxyAuth?: string }
+export interface PerUserAuthTokens { sapConnectivityAuth?: string; bearerToken?: string; ppProxyAuth?: string; samlAssertionAuthorization?: string }  // samlAssertionAuthorization: ready-to-use Authorization header value for SAMLAssertion destinations (S/4HANA Public Cloud / BAS flow)
 
 export function parseVCAPServices(env?: NodeJS.ProcessEnv, logger?: Logger): BTPConfig | null;   // env defaults to process.env; logger defaults to no-op
 export function lookupDestination(btpConfig: BTPConfig, name: string, logger?: Logger): Promise<Destination>;
