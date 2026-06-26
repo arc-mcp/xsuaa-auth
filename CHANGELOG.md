@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.4](https://github.com/arc-mcp/xsuaa-auth/compare/v0.1.3...v0.1.4) (2026-06-26)
+
+
+### Features
+
+* support for saml assertion destinations ([#21](https://github.com/arc-mcp/xsuaa-auth/issues/21)) ([645e998](https://github.com/arc-mcp/xsuaa-auth/commit/645e9985710a2afd04f04fd0770f189accad5419))
+
+
+### Bug Fixes
+
+* harden XSUAA verifier + OAuth callback, export DEFAULT_ACCEPTED_SCOPES ([#17](https://github.com/arc-mcp/xsuaa-auth/issues/17)) ([84f7526](https://github.com/arc-mcp/xsuaa-auth/commit/84f7526cb76bc2315970dfb001775698832ec097))
+
 ## [0.1.3](https://github.com/arc-mcp/xsuaa-auth/compare/v0.1.2...v0.1.3) (2026-06-18)
 
 
