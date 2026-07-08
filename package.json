@@ -79,8 +79,8 @@
     }
   },
   "devDependencies": {
-    "@arethetypeswrong/cli": "^0.18.3",
-    "@biomejs/biome": "^2.5.0",
+    "@arethetypeswrong/cli": "^0.18.4",
+    "@biomejs/biome": "^2.5.1",
     "@modelcontextprotocol/sdk": "^1.28.0",
     "@types/express": "^5.0.0",
     "@types/node": "^22.20.0",
