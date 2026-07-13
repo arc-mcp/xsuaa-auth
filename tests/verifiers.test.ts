@@ -482,8 +482,9 @@ describe('createChainedTokenVerifier', () => {
     // The starting log carries a fingerprint + length, never the token.
     const start = logger.debugs.find((e) => /starting/.test(e.message));
     expect(start?.data).toMatchObject({ tokenLen: SECRET.length });
-    expect(typeof start?.data?.tokenFp).toBe('string');
-    expect((start?.data?.tokenFp as string).length).toBe(8);
+    const tokenFp = start?.data?.tokenFp;
+    expect(typeof tokenFp).toBe('string');
+    expect(tokenFp).toHaveLength(8);
     expect(start?.data).not.toHaveProperty('tokenPreview');
   });
 
