@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.5](https://github.com/arc-mcp/xsuaa-auth/compare/v0.1.4...v0.1.5) (2026-07-17)
+
+
+### Features
+
+* add uncached and level-specific destination APIs ([#31](https://github.com/arc-mcp/xsuaa-auth/issues/31)) ([a54cbc5](https://github.com/arc-mcp/xsuaa-auth/commit/a54cbc5d9001ffeb9f4a4f0ee98f5ad1c94374d4))
+
 ## [0.1.4](https://github.com/arc-mcp/xsuaa-auth/compare/v0.1.3...v0.1.4) (2026-06-26)
 
 
