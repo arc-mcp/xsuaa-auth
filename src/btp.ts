@@ -16,8 +16,15 @@
 
 export type { BTPProxyConfig } from './btp/connectivity.js';
 export { createConnectivityProxy } from './btp/connectivity.js';
-export type { Destination, PerUserAuthTokens } from './btp/destination.js';
-export { lookupDestination, lookupDestinationWithUserToken, resolveBTPDestination } from './btp/destination.js';
+export type { Destination, DestinationLevel, PerUserAuthTokens } from './btp/destination.js';
+export {
+  DestinationServiceRequestError,
+  listDestinationsAtLevel,
+  lookupDestination,
+  lookupDestinationWithUserToken,
+  lookupDestinationWithUserTokenUncached,
+  resolveBTPDestination,
+} from './btp/destination.js';
 export type { BTPConfig } from './btp/vcap.js';
 export { parseVCAPServices } from './btp/vcap.js';
 export type { Logger } from './logger.js';

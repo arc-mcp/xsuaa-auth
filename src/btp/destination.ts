@@ -30,9 +30,32 @@ export interface Destination {
   ProxyType: string;
   User: string;
   Password: string;
+  /** Destination type as configured in BTP (normally HTTP). */
+  Type?: string;
   'sap-client'?: string;
   /** Cloud Connector Location ID — used to route to the correct SCC instance */
   CloudConnectorLocationId?: string;
+  /**
+   * Original destination configuration properties, including custom properties.
+   * Authentication-token and certificate response payloads are deliberately excluded.
+   * This object can still contain destination credentials and must be treated as sensitive.
+   */
+  originalProperties?: Readonly<Record<string, unknown>>;
+}
+
+/** Destination configuration level in the bound Destination service. */
+export type DestinationLevel = 'subaccount' | 'instance';
+
+/** Safe, typed error for collection requests. Response bodies are never included. */
+export class DestinationServiceRequestError extends Error {
+  constructor(
+    message: string,
+    readonly operation: 'token' | 'list',
+    readonly status?: number,
+  ) {
+    super(message);
+    this.name = 'DestinationServiceRequestError';
+  }
 }
 
 /**
@@ -62,6 +85,112 @@ export interface PerUserAuthTokens {
 
 // ─── Destination Service ─────────────────────────────────────────────
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function stringProperty(properties: Record<string, unknown>, key: string): string {
+  const value = properties[key];
+  return typeof value === 'string' ? value : '';
+}
+
+function originalConfiguration(value: unknown): Readonly<Record<string, unknown>> {
+  if (!isRecord(value)) return Object.freeze({});
+  const nested = value.destinationConfiguration;
+  const source = isRecord(nested) ? nested : value;
+  const { authTokens: _authTokens, certificates: _certificates, ...configuration } = source;
+  return Object.freeze(configuration);
+}
+
+function destinationFromConfiguration(value: unknown): Destination {
+  const properties = originalConfiguration(value);
+  return {
+    Name: stringProperty(properties, 'Name'),
+    URL: stringProperty(properties, 'URL'),
+    Authentication: stringProperty(properties, 'Authentication'),
+    ProxyType: stringProperty(properties, 'ProxyType'),
+    User: stringProperty(properties, 'User'),
+    Password: stringProperty(properties, 'Password'),
+    Type: stringProperty(properties, 'Type') || undefined,
+    'sap-client': stringProperty(properties, 'sap-client') || undefined,
+    CloudConnectorLocationId: stringProperty(properties, 'CloudConnectorLocationId') || undefined,
+    originalProperties: properties,
+  };
+}
+
+async function destinationServiceAccessToken(btpConfig: BTPConfig): Promise<string> {
+  const tokenUrl = btpConfig.destinationTokenUrl || `${btpConfig.xsuaaUrl}/oauth/token`;
+  try {
+    const { accessToken } = await fetchClientCredentialsToken(
+      tokenUrl,
+      btpConfig.destinationClientId,
+      btpConfig.destinationSecret,
+    );
+    return accessToken;
+  } catch {
+    throw new DestinationServiceRequestError('Destination Service token acquisition failed', 'token');
+  }
+}
+
+/**
+ * Fetch every destination configured at one explicit level of the bound service.
+ *
+ * The call uses a fresh service token and a direct collection request; it does not use the
+ * SAP Cloud SDK destination cache. Consumers should immediately project the returned objects
+ * because originalProperties can contain sensitive destination credentials.
+ */
+export async function listDestinationsAtLevel(
+  btpConfig: BTPConfig,
+  level: DestinationLevel,
+  logger: Logger = noopLogger,
+): Promise<Destination[]> {
+  const accessToken = await destinationServiceAccessToken(btpConfig);
+  const collection = level === 'subaccount' ? 'subaccountDestinations' : 'instanceDestinations';
+  const url = `${btpConfig.destinationUrl.replace(/\/$/, '')}/destination-configuration/v1/${collection}`;
+
+  let response: Response;
+  try {
+    response = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  } catch {
+    throw new DestinationServiceRequestError(`Destination Service ${level} list request failed`, 'list');
+  }
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new DestinationServiceRequestError(
+      `Destination Service ${level} list request returned HTTP ${response.status}`,
+      'list',
+      response.status,
+    );
+  }
+
+  let raw: unknown;
+  try {
+    raw = await response.json();
+  } catch {
+    throw new DestinationServiceRequestError(
+      `Destination Service ${level} list returned an invalid response`,
+      'list',
+      response.status,
+    );
+  }
+  const entries = Array.isArray(raw)
+    ? raw
+    : isRecord(raw) && Array.isArray(raw.destinations)
+      ? raw.destinations
+      : undefined;
+  if (!entries) {
+    throw new DestinationServiceRequestError(
+      `Destination Service ${level} list returned an invalid response`,
+      'list',
+      response.status,
+    );
+  }
+
+  const destinations = entries.map(destinationFromConfiguration);
+  logger.info('BTP destination collection resolved', { level, count: destinations.length });
+  return destinations;
+}
+
 /**
  * Look up a destination from the BTP Destination Service.
  * Returns SAP URL, credentials, and proxy type.
@@ -90,18 +219,19 @@ export async function lookupDestination(
     throw new Error(`Destination Service returned HTTP ${resp.status}: ${text.slice(0, 200)}`);
   }
 
-  const data = (await resp.json()) as { destinationConfiguration: Destination };
+  const data = (await resp.json()) as unknown;
+  const destination = destinationFromConfiguration(data);
 
   // Don't log the resolved SAP URL/host (internal topology) — name + auth metadata
   // are enough to debug a destination lookup. Same for the per-user paths below.
   logger.info('BTP destination resolved', {
-    name: data.destinationConfiguration.Name,
-    auth: data.destinationConfiguration.Authentication,
-    proxyType: data.destinationConfiguration.ProxyType,
-    hasLocationId: data.destinationConfiguration.CloudConnectorLocationId != null,
+    name: destination.Name,
+    auth: destination.Authentication,
+    proxyType: destination.ProxyType,
+    hasLocationId: destination.CloudConnectorLocationId != null,
   });
 
-  return data.destinationConfiguration;
+  return destination;
 }
 
 // ─── Per-User Destination (Principal Propagation) ────────────────────
@@ -129,6 +259,30 @@ export async function lookupDestinationWithUserToken(
   destinationName: string,
   userJwt: string,
   logger: Logger = noopLogger,
+): Promise<{ destination: Destination; authTokens: PerUserAuthTokens }> {
+  return lookupDestinationWithUserTokenInternal(btpConfig, destinationName, userJwt, true, logger);
+}
+
+/**
+ * Resolve a per-user destination without reading from or writing to the SAP Cloud SDK cache.
+ * Use this when every request must observe destination/PP changes immediately and failed PP
+ * resolutions must never influence a later retry.
+ */
+export async function lookupDestinationWithUserTokenUncached(
+  btpConfig: BTPConfig,
+  destinationName: string,
+  userJwt: string,
+  logger: Logger = noopLogger,
+): Promise<{ destination: Destination; authTokens: PerUserAuthTokens }> {
+  return lookupDestinationWithUserTokenInternal(btpConfig, destinationName, userJwt, false, logger);
+}
+
+async function lookupDestinationWithUserTokenInternal(
+  btpConfig: BTPConfig,
+  destinationName: string,
+  userJwt: string,
+  useCache: boolean,
+  logger: Logger,
 ): Promise<{ destination: Destination; authTokens: PerUserAuthTokens }> {
   // JWT-shape guard (anti-footgun): PP needs a per-user user token, not an API key.
   // arc-1 guards this at its call site; the package guards it for every consumer.
@@ -183,7 +337,7 @@ export async function lookupDestinationWithUserToken(
   const sdkDest: SdkDestination | null = await getDestination({
     destinationName,
     jwt: userJwt,
-    useCache: true,
+    useCache,
     isolationStrategy: 'tenant-user',
   });
 
@@ -192,6 +346,7 @@ export async function lookupDestinationWithUserToken(
   }
 
   // Map SDK Destination → package Destination type
+  const originalProperties = originalConfiguration(sdkDest.originalProperties);
   const dest: Destination = {
     Name: sdkDest.name ?? destinationName,
     URL: sdkDest.url ?? '',
@@ -199,8 +354,11 @@ export async function lookupDestinationWithUserToken(
     ProxyType: sdkDest.proxyType ?? '',
     User: sdkDest.username ?? '',
     Password: sdkDest.password ?? '',
-    'sap-client': sdkDest.sapClient ?? undefined,
-    CloudConnectorLocationId: sdkDest.cloudConnectorLocationId ?? undefined,
+    Type: sdkDest.type ?? (stringProperty(originalProperties, 'Type') || undefined),
+    'sap-client': sdkDest.sapClient ?? (stringProperty(originalProperties, 'sap-client') || undefined),
+    CloudConnectorLocationId:
+      sdkDest.cloudConnectorLocationId ?? (stringProperty(originalProperties, 'CloudConnectorLocationId') || undefined),
+    originalProperties,
   };
 
   const tokens: PerUserAuthTokens = {};

@@ -22,7 +22,13 @@ const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
 
 // Import AFTER mocking.
-const { lookupDestinationWithUserToken, resolveBTPDestination } = await import('../../src/btp.js');
+const {
+  DestinationServiceRequestError,
+  listDestinationsAtLevel,
+  lookupDestinationWithUserToken,
+  lookupDestinationWithUserTokenUncached,
+  resolveBTPDestination,
+} = await import('../../src/btp.js');
 
 import type { BTPConfig } from '../../src/btp.js';
 
@@ -45,6 +51,97 @@ const TEST_BTP_CONFIG: BTPConfig = {
   connectivitySecret: 'conn-secret',
   connectivityTokenUrl: 'https://test.auth.example.com/oauth/token',
 };
+
+describe('listDestinationsAtLevel', () => {
+  beforeEach(() => {
+    mockFetch.mockReset();
+  });
+
+  it.each([
+    ['subaccount', 'subaccountDestinations'],
+    ['instance', 'instanceDestinations'],
+  ] as const)('fetches the explicit %s collection with a fresh service token', async (level, collection) => {
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ access_token: 'service-token', expires_in: 3600 }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => [
+          {
+            Name: 'ARC1_A4H_100_PP',
+            Type: 'HTTP',
+            URL: 'http://a4h.internal:50000',
+            Authentication: 'PrincipalPropagation',
+            ProxyType: 'OnPremise',
+            Password: 'sensitive',
+            'sap-sysid': 'A4H',
+            'sap-client': '100',
+            'arc1.enabled': 'true',
+            authTokens: [{ value: 'must-not-be-copied' }],
+            certificates: [{ content: 'must-not-be-copied' }],
+          },
+        ],
+      });
+
+    const result = await listDestinationsAtLevel(TEST_BTP_CONFIG, level);
+
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      2,
+      `${TEST_BTP_CONFIG.destinationUrl}/destination-configuration/v1/${collection}`,
+      { headers: { Authorization: 'Bearer service-token' } },
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      Name: 'ARC1_A4H_100_PP',
+      Type: 'HTTP',
+      'sap-client': '100',
+    });
+    expect(result[0].originalProperties).toMatchObject({
+      'sap-sysid': 'A4H',
+      'arc1.enabled': 'true',
+      Password: 'sensitive',
+    });
+    expect(result[0].originalProperties).not.toHaveProperty('authTokens');
+    expect(result[0].originalProperties).not.toHaveProperty('certificates');
+  });
+
+  it('returns a typed body-free error for a failed collection request', async () => {
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ access_token: 'service-token', expires_in: 3600 }),
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 403,
+        body: null,
+      });
+
+    const error = await listDestinationsAtLevel(TEST_BTP_CONFIG, 'subaccount').catch((caught) => caught);
+    expect(error).toBeInstanceOf(DestinationServiceRequestError);
+    expect(error).toMatchObject({ operation: 'list', status: 403 });
+    expect(error.message).not.toContain('secret response body');
+  });
+
+  it('does not retain a failed token endpoint response body in the error graph', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      text: async () => 'client_secret=must-never-escape',
+    });
+
+    const error = await listDestinationsAtLevel(TEST_BTP_CONFIG, 'subaccount').catch((caught) => caught);
+    expect(error).toBeInstanceOf(DestinationServiceRequestError);
+    expect(error).toMatchObject({ operation: 'token' });
+    expect(JSON.stringify(error, Object.getOwnPropertyNames(error))).not.toContain('must-never-escape');
+    expect(error.cause).toBeUndefined();
+  });
+});
 
 describe('lookupDestinationWithUserToken', () => {
   beforeEach(() => {
@@ -86,6 +183,16 @@ describe('lookupDestinationWithUserToken', () => {
           http_header: { key: 'SAP-Connectivity-Authentication', value: 'Bearer saml-assertion-encoded' },
         },
       ],
+      originalProperties: {
+        destinationConfiguration: {
+          Name: 'SAP_TRIAL',
+          Type: 'HTTP',
+          'sap-sysid': 'A4H',
+          'sap-client': '100',
+          'arc1.enabled': 'true',
+        },
+        authTokens: [{ value: 'do-not-copy' }],
+      },
     });
 
     const result = await lookupDestinationWithUserToken(TEST_BTP_CONFIG, 'SAP_TRIAL', USER_JWT);
@@ -100,7 +207,40 @@ describe('lookupDestinationWithUserToken', () => {
     });
     expect(result.destination.Name).toBe('SAP_TRIAL');
     expect(result.destination.Authentication).toBe('PrincipalPropagation');
+    expect(result.destination.originalProperties).toMatchObject({
+      'sap-sysid': 'A4H',
+      'arc1.enabled': 'true',
+    });
+    expect(result.destination.originalProperties).not.toHaveProperty('authTokens');
     expect(result.authTokens.sapConnectivityAuth).toBe('Bearer saml-assertion-encoded');
+  });
+
+  it('provides an explicit uncached PP lookup for immediate retries and drift detection', async () => {
+    mockGetDestination.mockResolvedValueOnce({
+      name: 'SAP_TRIAL',
+      url: 'http://sap:50000',
+      authentication: 'PrincipalPropagation',
+      proxyType: 'OnPremise',
+      username: '',
+      password: '',
+      authTokens: [
+        {
+          type: 'PrincipalPropagationToken',
+          value: 'saml',
+          error: null,
+          http_header: { key: 'SAP-Connectivity-Authentication', value: 'Bearer saml' },
+        },
+      ],
+    });
+
+    await lookupDestinationWithUserTokenUncached(TEST_BTP_CONFIG, 'SAP_TRIAL', USER_JWT);
+
+    expect(mockGetDestination).toHaveBeenCalledWith({
+      destinationName: 'SAP_TRIAL',
+      jwt: USER_JWT,
+      useCache: false,
+      isolationStrategy: 'tenant-user',
+    });
   });
 
   // ── Security: per-user cache isolation on the PP lookup ──

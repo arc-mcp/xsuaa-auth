@@ -164,13 +164,20 @@ The facade's configuration object. All fields are optional except where noted.
 The `./btp` entrypoint maps the authenticated MCP user to their own SAP identity via the BTP Destination Service + Cloud Connector. The handoff from the auth layer is just the **raw, already-verified bearer JWT** (`authInfo.token`).
 
 ```ts
-import { resolveBTPDestination, lookupDestinationWithUserToken, parseVCAPServices } from '@arc-mcp/xsuaa-auth/btp';
+import {
+  listDestinationsAtLevel,
+  lookupDestinationWithUserToken,
+  lookupDestinationWithUserTokenUncached,
+  parseVCAPServices,
+  resolveBTPDestination,
+} from '@arc-mcp/xsuaa-auth/btp';
 
 // Technical (shared) destination — no per-user identity:
 const { url, username, password, client, proxy } = await resolveBTPDestination('SAP_TRIAL', logger);
 
 // Per-user principal propagation — pass the verified user JWT:
 const btpConfig = parseVCAPServices(process.env)!;
+const subaccountDestinations = await listDestinationsAtLevel(btpConfig, 'subaccount', logger);
 const { destination, authTokens } = await lookupDestinationWithUserToken(
   btpConfig,
   'MY_PP_DESTINATION',
@@ -178,6 +185,9 @@ const { destination, authTokens } = await lookupDestinationWithUserToken(
   logger,
 );
 // authTokens: { sapConnectivityAuth?, bearerToken?, ppProxyAuth?, samlAssertionAuthorization? }
+
+// Drift-sensitive per-request lookup: bypasses both reads and writes of the SDK cache.
+await lookupDestinationWithUserTokenUncached(btpConfig, 'MY_PP_DESTINATION', authInfo.token, logger);
 ```
 
 **The package returns credentials + a proxy descriptor; it never applies them.** Your SAP HTTP client owns header assembly (`Authorization` / `SAP-Connectivity-Authentication` / `Proxy-Authorization`) and the forward-proxy request. What to do when no PP token is produced (throw vs. fall back to BasicAuth) is **your** policy.
@@ -194,8 +204,10 @@ Which `PerUserAuthTokens` field is populated depends on the destination's `Authe
 | Export | Purpose |
 |--------|---------|
 | `parseVCAPServices(env?)` | Build a `BTPConfig` from `VCAP_SERVICES` (XSUAA + destination + connectivity bindings). |
+| `listDestinationsAtLevel(cfg, level, logger?)` | Fetch the complete `subaccount` or `instance` collection without the SDK cache. Each result includes `originalProperties`; immediately project it because destination credentials may be present. |
 | `lookupDestination(cfg, name, logger?)` | Resolve a destination (works with BasicAuth destinations, no user JWT). |
 | `lookupDestinationWithUserToken(cfg, name, userJwt, logger?)` | The PP primitive — per-user destination + `PerUserAuthTokens`. JWT-only (anti-footgun). |
+| `lookupDestinationWithUserTokenUncached(cfg, name, userJwt, logger?)` | Same PP result with `useCache:false`; failed or successful resolutions cannot affect a later lookup. |
 | `createConnectivityProxy(cfg, locationId?, logger?)` | A `BTPProxyConfig` descriptor for the Cloud Connector connectivity proxy. |
 | `resolveBTPDestination(name, logger?)` | Convenience: destination → `{ url, username, password, client, proxy }`. |
 
