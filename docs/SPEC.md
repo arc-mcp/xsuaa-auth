@@ -229,7 +229,7 @@ Notes:
 
 ---
 
-## 7. Principal-propagation API (`./btp`) — FROZEN
+## 7. Principal-propagation API (`./btp`) — ADDITIVE ONLY
 
 Lifted near-verbatim from arc-1 `src/adt/btp.ts` (LISA's copy is byte-identical). The **only** refactor is the logger seam (optional trailing `logger?` param; default no-op).
 
@@ -242,8 +242,10 @@ export interface BTPConfig {
 }
 export interface Destination {
   Name: string; URL: string; Authentication: string; ProxyType: string; User: string; Password: string;
-  'sap-client'?: string; CloudConnectorLocationId?: string;
+  Type?: string; 'sap-client'?: string; CloudConnectorLocationId?: string;
+  originalProperties?: Readonly<Record<string, unknown>>;
 }
+export type DestinationLevel = 'subaccount' | 'instance';
 export interface BTPProxyConfig { host: string; port: number; protocol: string; getProxyToken: () => Promise<string>; locationId?: string }
 export interface PerUserAuthTokens { sapConnectivityAuth?: string; bearerToken?: string; ppProxyAuth?: string; samlAssertionAuthorization?: string }  // samlAssertionAuthorization: ready-to-use Authorization header value for SAMLAssertion destinations (S/4HANA Public Cloud / BAS flow)
 
@@ -252,6 +254,12 @@ export function lookupDestination(btpConfig: BTPConfig, name: string, logger?: L
 export function lookupDestinationWithUserToken(            // ← the PP primitive
   btpConfig: BTPConfig, name: string, userJwt: string, logger?: Logger,
 ): Promise<{ destination: Destination; authTokens: PerUserAuthTokens }>;
+export function lookupDestinationWithUserTokenUncached(
+  btpConfig: BTPConfig, name: string, userJwt: string, logger?: Logger,
+): Promise<{ destination: Destination; authTokens: PerUserAuthTokens }>;
+export function listDestinationsAtLevel(
+  btpConfig: BTPConfig, level: DestinationLevel, logger?: Logger,
+): Promise<Destination[]>;
 export function createConnectivityProxy(btpConfig: BTPConfig, locationId?: string, logger?: Logger): BTPProxyConfig | null;
 export function resolveBTPDestination(name: string, logger?: Logger): Promise<{
   url: string; username: string; password: string; client: string; proxy: BTPProxyConfig | null;
@@ -259,6 +267,8 @@ export function resolveBTPDestination(name: string, logger?: Logger): Promise<{
 ```
 
 - **`@sap-cloud-sdk/connectivity`** does the destination-service call + `X-User-Token` + per-user cache; the jwt-bearer "Option 2" fallback is a raw global-`fetch` call that validates the JWT then re-sends the **original** user JWT as `SAP-Connectivity-Authentication`. (Behavior preserved exactly from arc-1.)
+- **Collection discovery is level-explicit:** `listDestinationsAtLevel` directly calls only the requested subaccount or service-instance collection and acquires its own service token. It does not use the SDK destination cache. `originalProperties` excludes auth-token and certificate response payloads but may still contain configured destination credentials; consumers must immediately project it to their own allowlist.
+- **The uncached PP function is deliberate, not a changed default:** the existing function remains tenant-user cached. `lookupDestinationWithUserTokenUncached` passes `useCache:false`, so neither a successful nor failed PP result can affect the next retry.
 - **Not in v1, optional/future:** a shared `proxyFetch(proxy, target, logger?)` forward-proxy helper. arc-1 + LISA reimplement it identically inside their HTTP clients, but ripping it out of arc-1's `AdtHttpClient` (CSRF/cookies/stateful sessions) is a non-trivial edit that conflicts with the minimal-diff goal. Ship the `BTPProxyConfig` descriptor only; consumers keep their own proxy-request code. Revisit once arc-1's HTTP client is otherwise touched.
 - **The package returns credentials + a proxy descriptor; it never applies them.** What to do when no PP token is produced (arc-1 throws; LISA falls back to BasicAuth) is **consumer policy** — `lookupDestinationWithUserToken` returns a possibly-empty `PerUserAuthTokens` and the consumer decides.
 - **`lookupDestinationWithUserToken` is JWT-only (anti-footgun):** it validates `userJwt` is a 3-segment JWT and throws a typed error otherwise — PP needs a per-user user token, not an API key. (arc-1 guards this at its call site today; the package now guards it for every consumer.)
