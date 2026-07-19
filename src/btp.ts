@@ -26,5 +26,10 @@ export {
   resolveBTPDestination,
 } from './btp/destination.js';
 export type { BTPConfig } from './btp/vcap.js';
-export { parseVCAPServices } from './btp/vcap.js';
+export {
+  BTPRequestTimeoutError,
+  DEFAULT_BTP_REQUEST_TIMEOUT_MS,
+  MAX_BTP_REQUEST_TIMEOUT_MS,
+  parseVCAPServices,
+} from './btp/vcap.js';
 export type { Logger } from './logger.js';

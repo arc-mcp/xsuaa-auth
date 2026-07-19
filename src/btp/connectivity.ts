@@ -59,6 +59,7 @@ export function createConnectivityProxy(
         btpConfig.connectivityTokenUrl,
         btpConfig.connectivityClientId,
         btpConfig.connectivitySecret,
+        btpConfig.requestTimeoutMs,
       );
 
       cachedToken = accessToken;

@@ -18,7 +18,13 @@ import {
 } from '@sap-cloud-sdk/connectivity';
 import { type Logger, noopLogger } from '../logger.js';
 import { type BTPProxyConfig, createConnectivityProxy } from './connectivity.js';
-import { type BTPConfig, fetchClientCredentialsToken, parseVCAPServices } from './vcap.js';
+import {
+  type BTPConfig,
+  BTPRequestTimeoutError,
+  fetchClientCredentialsToken,
+  parseVCAPServices,
+  withBtpRequestTimeout,
+} from './vcap.js';
 
 // ─── Types ───────────────────────────────────────────────────────────
 
@@ -55,6 +61,40 @@ export class DestinationServiceRequestError extends Error {
   ) {
     super(message);
     this.name = 'DestinationServiceRequestError';
+  }
+}
+
+async function fetchDestinationServiceJson(
+  btpConfig: BTPConfig,
+  url: string,
+  accessToken: string,
+  operation: 'list' | 'find',
+  label: string,
+): Promise<{ raw: unknown; status: number }> {
+  let response: Response | undefined;
+  try {
+    const raw = await withBtpRequestTimeout(btpConfig.requestTimeoutMs, async (signal) => {
+      response = await fetch(url, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        signal,
+      });
+      if (!response.ok) {
+        await response.body?.cancel().catch(() => undefined);
+        throw new DestinationServiceRequestError(
+          `${label} request returned HTTP ${response.status}`,
+          operation,
+          response.status,
+        );
+      }
+      return response.json() as Promise<unknown>;
+    });
+    return { raw, status: response?.status ?? 200 };
+  } catch (error) {
+    if (error instanceof DestinationServiceRequestError) throw error;
+    if (error instanceof BTPRequestTimeoutError || !response) {
+      throw new DestinationServiceRequestError(`${label} request failed`, operation);
+    }
+    throw new DestinationServiceRequestError(`${label} returned an invalid response`, operation, response.status);
   }
 }
 
@@ -204,6 +244,7 @@ async function destinationServiceAccessToken(btpConfig: BTPConfig): Promise<stri
       tokenUrl,
       btpConfig.destinationClientId,
       btpConfig.destinationSecret,
+      btpConfig.requestTimeoutMs,
     );
     if (typeof accessToken !== 'string' || accessToken.length === 0) {
       throw new Error('Destination Service token response has no access token');
@@ -230,31 +271,13 @@ export async function listDestinationsAtLevel(
   const collection = level === 'subaccount' ? 'subaccountDestinations' : 'instanceDestinations';
   const url = `${btpConfig.destinationUrl.replace(/\/$/, '')}/destination-configuration/v1/${collection}`;
 
-  let response: Response;
-  try {
-    response = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
-  } catch {
-    throw new DestinationServiceRequestError(`Destination Service ${level} list request failed`, 'list');
-  }
-  if (!response.ok) {
-    await response.body?.cancel().catch(() => undefined);
-    throw new DestinationServiceRequestError(
-      `Destination Service ${level} list request returned HTTP ${response.status}`,
-      'list',
-      response.status,
-    );
-  }
-
-  let raw: unknown;
-  try {
-    raw = await response.json();
-  } catch {
-    throw new DestinationServiceRequestError(
-      `Destination Service ${level} list returned an invalid response`,
-      'list',
-      response.status,
-    );
-  }
+  const { raw, status } = await fetchDestinationServiceJson(
+    btpConfig,
+    url,
+    accessToken,
+    'list',
+    `Destination Service ${level} list`,
+  );
   const entries = Array.isArray(raw)
     ? raw
     : isRecord(raw) && Array.isArray(raw.destinations)
@@ -264,7 +287,7 @@ export async function listDestinationsAtLevel(
     throw new DestinationServiceRequestError(
       `Destination Service ${level} list returned an invalid response`,
       'list',
-      response.status,
+      status,
     );
   }
 
@@ -286,40 +309,15 @@ export async function lookupDestination(
 
   // Call Destination Service
   const destUrl = `${btpConfig.destinationUrl.replace(/\/$/, '')}/destination-configuration/v1/destinations/${encodeURIComponent(destinationName)}`;
-  let resp: Response;
-  try {
-    resp = await fetch(destUrl, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-  } catch {
-    throw new DestinationServiceRequestError('Destination Service find request failed', 'find');
-  }
-
-  if (!resp.ok) {
-    await resp.body?.cancel().catch(() => undefined);
-    throw new DestinationServiceRequestError(
-      `Destination Service find request returned HTTP ${resp.status}`,
-      'find',
-      resp.status,
-    );
-  }
-
-  let data: unknown;
-  try {
-    data = await resp.json();
-  } catch {
-    throw new DestinationServiceRequestError(
-      'Destination Service find returned an invalid response',
-      'find',
-      resp.status,
-    );
-  }
+  const { raw: data, status } = await fetchDestinationServiceJson(
+    btpConfig,
+    destUrl,
+    accessToken,
+    'find',
+    'Destination Service find',
+  );
   if (!isValidDestinationResponse(data)) {
-    throw new DestinationServiceRequestError(
-      'Destination Service find returned an invalid response',
-      'find',
-      resp.status,
-    );
+    throw new DestinationServiceRequestError('Destination Service find returned an invalid response', 'find', status);
   }
   const destination = destinationFromConfiguration(data);
 
@@ -567,39 +565,42 @@ async function lookupDestinationWithUserTokenInternal(
       // Exchange user JWT via jwt-bearer grant type with Connectivity Service credentials.
       // This validates the user JWT and proves we have a legitimate user token.
       // The exchange itself isn't used for auth — we use the original JWT instead.
-      const exchangeResp = await fetch(btpConfig.connectivityTokenUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
-          client_id: btpConfig.connectivityClientId,
-          client_secret: btpConfig.connectivitySecret,
-          assertion: userJwt,
-          token_format: 'jwt',
-          response_type: 'token',
-        }).toString(),
+      await withBtpRequestTimeout(btpConfig.requestTimeoutMs, async (signal) => {
+        const exchangeResp = await fetch(btpConfig.connectivityTokenUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+            client_id: btpConfig.connectivityClientId,
+            client_secret: btpConfig.connectivitySecret,
+            assertion: userJwt,
+            token_format: 'jwt',
+            response_type: 'token',
+          }).toString(),
+          signal,
+        });
+
+        if (exchangeResp.ok) {
+          await exchangeResp.json(); // consume response body
+
+          // Option 2: Send the ORIGINAL user JWT as SAP-Connectivity-Authentication.
+          // The CC reads this header, extracts the user identity (email), and generates
+          // a short-lived X.509 certificate with CN=${email}. The regular connectivity
+          // proxy token (from btpProxy.getProxyToken()) is sent as Proxy-Authorization.
+          tokens.sapConnectivityAuth = `Bearer ${userJwt}`;
+
+          logger.info('PP: using Option 2 (SAP-Connectivity-Authentication with original JWT)', {
+            destination: destinationName,
+          });
+        } else {
+          const errText = await exchangeResp.text();
+          logger.error('PP jwt-bearer exchange: failed', {
+            destination: destinationName,
+            status: exchangeResp.status,
+            error: errText.slice(0, 300),
+          });
+        }
       });
-
-      if (exchangeResp.ok) {
-        await exchangeResp.json(); // consume response body
-
-        // Option 2: Send the ORIGINAL user JWT as SAP-Connectivity-Authentication.
-        // The CC reads this header, extracts the user identity (email), and generates
-        // a short-lived X.509 certificate with CN=${email}. The regular connectivity
-        // proxy token (from btpProxy.getProxyToken()) is sent as Proxy-Authorization.
-        tokens.sapConnectivityAuth = `Bearer ${userJwt}`;
-
-        logger.info('PP: using Option 2 (SAP-Connectivity-Authentication with original JWT)', {
-          destination: destinationName,
-        });
-      } else {
-        const errText = await exchangeResp.text();
-        logger.error('PP jwt-bearer exchange: failed', {
-          destination: destinationName,
-          status: exchangeResp.status,
-          error: errText.slice(0, 300),
-        });
-      }
     } catch (err) {
       logger.error('PP jwt-bearer exchange: error', {
         destination: destinationName,
