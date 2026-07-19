@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.6](https://github.com/arc-mcp/xsuaa-auth/compare/v0.1.5...v0.1.6) (2026-07-19)
+
+
+### Bug Fixes
+
+* harden Destination Service Find handling ([#33](https://github.com/arc-mcp/xsuaa-auth/issues/33)) ([ba30e8d](https://github.com/arc-mcp/xsuaa-auth/commit/ba30e8de544d973fa5f6a60e7c97b1fc11123dca))
+
 ## [0.1.5](https://github.com/arc-mcp/xsuaa-auth/compare/v0.1.4...v0.1.5) (2026-07-17)
 
 
