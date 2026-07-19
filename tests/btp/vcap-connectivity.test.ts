@@ -8,7 +8,13 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { type BTPConfig, createConnectivityProxy, lookupDestination, parseVCAPServices } from '../../src/btp.js';
+import {
+  type BTPConfig,
+  createConnectivityProxy,
+  DestinationServiceRequestError,
+  lookupDestination,
+  parseVCAPServices,
+} from '../../src/btp.js';
 
 const BASE_BTP_CONFIG: BTPConfig = {
   xsuaaUrl: 'https://xsuaa.example.com',
@@ -146,9 +152,9 @@ describe('lookupDestination (startup direct-fetch path)', () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ access_token: 'destination-token', expires_in: 3600 }))
       .mockResolvedValueOnce(new Response('not found', { status: 404 }));
-    await expect(lookupDestination(BASE_BTP_CONFIG, 'MISSING')).rejects.toThrow(
-      /Destination Service returned HTTP 404/,
-    );
+    const error = await lookupDestination(BASE_BTP_CONFIG, 'MISSING').catch((caught) => caught);
+    expect(error).toBeInstanceOf(DestinationServiceRequestError);
+    expect(error).toMatchObject({ operation: 'find', status: 404 });
   });
 });
 

@@ -37,8 +37,8 @@ export interface Destination {
   CloudConnectorLocationId?: string;
   /**
    * Original destination configuration properties, including custom properties.
-   * Authentication-token and certificate response payloads are deliberately excluded.
-   * This object can still contain destination credentials and must be treated as sensitive.
+   * Known credential, authentication-token, authorization-header, and certificate material is
+   * deliberately excluded. Explicit Basic credentials are available only through User/Password.
    */
   originalProperties?: Readonly<Record<string, unknown>>;
 }
@@ -46,11 +46,11 @@ export interface Destination {
 /** Destination configuration level in the bound Destination service. */
 export type DestinationLevel = 'subaccount' | 'instance';
 
-/** Safe, typed error for collection requests. Response bodies are never included. */
+/** Safe, typed error for direct Destination Service requests. Response bodies are never included. */
 export class DestinationServiceRequestError extends Error {
   constructor(
     message: string,
-    readonly operation: 'token' | 'list',
+    readonly operation: 'token' | 'list' | 'find',
     readonly status?: number,
   ) {
     super(message);
@@ -94,16 +94,95 @@ function stringProperty(properties: Record<string, unknown>, key: string): strin
   return typeof value === 'string' ? value : '';
 }
 
-function originalConfiguration(value: unknown): Readonly<Record<string, unknown>> {
-  if (!isRecord(value)) return Object.freeze({});
+function destinationConfiguration(value: unknown): Record<string, unknown> | undefined {
+  if (!isRecord(value)) return undefined;
   const nested = value.destinationConfiguration;
-  const source = isRecord(nested) ? nested : value;
-  const { authTokens: _authTokens, certificates: _certificates, ...configuration } = source;
-  return Object.freeze(configuration);
+  if (Object.hasOwn(value, 'destinationConfiguration')) {
+    return isRecord(nested) ? nested : undefined;
+  }
+  return value;
+}
+
+const SENSITIVE_DESTINATION_PROPERTY_KEYS = new Set([
+  'apikey',
+  'authtokens',
+  'authorization',
+  'certificates',
+  'clientsecret',
+  'cookie',
+  'credentials',
+  'keystorepassword',
+  'mtlskeypair',
+  'password',
+  'privatekey',
+  'proxyauthorization',
+  'sapconnectivityauthentication',
+  'setcookie',
+  'systemuser',
+  'tokenservicepassword',
+  'tokenserviceuser',
+  'truststorecertificate',
+  'user',
+  'username',
+]);
+
+function isSensitiveDestinationProperty(key: string): boolean {
+  const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, '');
+  return (
+    SENSITIVE_DESTINATION_PROPERTY_KEYS.has(normalized) ||
+    normalized.endsWith('password') ||
+    normalized.endsWith('secret') ||
+    normalized.endsWith('privatekey') ||
+    normalized.endsWith('accesstoken') ||
+    normalized.endsWith('refreshtoken') ||
+    normalized.endsWith('idtoken') ||
+    normalized.endsWith('samlassertion') ||
+    normalized.endsWith('certificate') ||
+    normalized.endsWith('certificates')
+  );
+}
+
+function sanitizeDestinationProperties(
+  properties: Record<string, unknown>,
+  seen: WeakSet<object>,
+): Readonly<Record<string, unknown>> {
+  if (seen.has(properties)) return Object.freeze({});
+  seen.add(properties);
+
+  const sanitized: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(properties)) {
+    if (isSensitiveDestinationProperty(key)) continue;
+    if (Array.isArray(value)) {
+      sanitized[key] = Object.freeze(
+        value.map((entry) => (isRecord(entry) ? sanitizeDestinationProperties(entry, seen) : entry)),
+      );
+    } else if (isRecord(value)) {
+      sanitized[key] = sanitizeDestinationProperties(value, seen);
+    } else {
+      sanitized[key] = value;
+    }
+  }
+
+  seen.delete(properties);
+  return Object.freeze(sanitized);
+}
+
+function originalConfiguration(value: unknown): Readonly<Record<string, unknown>> {
+  const properties = destinationConfiguration(value);
+  return properties ? sanitizeDestinationProperties(properties, new WeakSet()) : Object.freeze({});
+}
+
+function isValidDestinationResponse(value: unknown): boolean {
+  const properties = destinationConfiguration(value);
+  if (!properties) return false;
+  return ['Name', 'URL', 'Authentication', 'ProxyType'].every((key) => {
+    const property = properties[key];
+    return typeof property === 'string' && property.trim().length > 0;
+  });
 }
 
 function destinationFromConfiguration(value: unknown): Destination {
-  const properties = originalConfiguration(value);
+  const properties = destinationConfiguration(value) ?? {};
   return {
     Name: stringProperty(properties, 'Name'),
     URL: stringProperty(properties, 'URL'),
@@ -114,7 +193,7 @@ function destinationFromConfiguration(value: unknown): Destination {
     Type: stringProperty(properties, 'Type') || undefined,
     'sap-client': stringProperty(properties, 'sap-client') || undefined,
     CloudConnectorLocationId: stringProperty(properties, 'CloudConnectorLocationId') || undefined,
-    originalProperties: properties,
+    originalProperties: originalConfiguration(value),
   };
 }
 
@@ -126,6 +205,9 @@ async function destinationServiceAccessToken(btpConfig: BTPConfig): Promise<stri
       btpConfig.destinationClientId,
       btpConfig.destinationSecret,
     );
+    if (typeof accessToken !== 'string' || accessToken.length === 0) {
+      throw new Error('Destination Service token response has no access token');
+    }
     return accessToken;
   } catch {
     throw new DestinationServiceRequestError('Destination Service token acquisition failed', 'token');
@@ -137,7 +219,7 @@ async function destinationServiceAccessToken(btpConfig: BTPConfig): Promise<stri
  *
  * The call uses a fresh service token and a direct collection request; it does not use the
  * SAP Cloud SDK destination cache. Consumers should immediately project the returned objects
- * because originalProperties can contain sensitive destination credentials.
+ * because the explicit User/Password fields can contain sensitive destination credentials.
  */
 export async function listDestinationsAtLevel(
   btpConfig: BTPConfig,
@@ -200,26 +282,45 @@ export async function lookupDestination(
   destinationName: string,
   logger: Logger = noopLogger,
 ): Promise<Destination> {
-  // Get token for Destination Service API
-  const tokenUrl = btpConfig.destinationTokenUrl || `${btpConfig.xsuaaUrl}/oauth/token`;
-  const { accessToken } = await fetchClientCredentialsToken(
-    tokenUrl,
-    btpConfig.destinationClientId,
-    btpConfig.destinationSecret,
-  );
+  const accessToken = await destinationServiceAccessToken(btpConfig);
 
   // Call Destination Service
   const destUrl = `${btpConfig.destinationUrl.replace(/\/$/, '')}/destination-configuration/v1/destinations/${encodeURIComponent(destinationName)}`;
-  const resp = await fetch(destUrl, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-
-  if (!resp.ok) {
-    const text = await resp.text();
-    throw new Error(`Destination Service returned HTTP ${resp.status}: ${text.slice(0, 200)}`);
+  let resp: Response;
+  try {
+    resp = await fetch(destUrl, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+  } catch {
+    throw new DestinationServiceRequestError('Destination Service find request failed', 'find');
   }
 
-  const data = (await resp.json()) as unknown;
+  if (!resp.ok) {
+    await resp.body?.cancel().catch(() => undefined);
+    throw new DestinationServiceRequestError(
+      `Destination Service find request returned HTTP ${resp.status}`,
+      'find',
+      resp.status,
+    );
+  }
+
+  let data: unknown;
+  try {
+    data = await resp.json();
+  } catch {
+    throw new DestinationServiceRequestError(
+      'Destination Service find returned an invalid response',
+      'find',
+      resp.status,
+    );
+  }
+  if (!isValidDestinationResponse(data)) {
+    throw new DestinationServiceRequestError(
+      'Destination Service find returned an invalid response',
+      'find',
+      resp.status,
+    );
+  }
   const destination = destinationFromConfiguration(data);
 
   // Don't log the resolved SAP URL/host (internal topology) — name + auth metadata
