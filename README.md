@@ -204,7 +204,7 @@ Which `PerUserAuthTokens` field is populated depends on the destination's `Authe
 | Export | Purpose |
 |--------|---------|
 | `parseVCAPServices(env?)` | Build a `BTPConfig` from `VCAP_SERVICES` (XSUAA + destination + connectivity bindings). |
-| `listDestinationsAtLevel(cfg, level, logger?)` | Fetch the complete `subaccount` or `instance` collection without the SDK cache. Each result includes `originalProperties`; immediately project it because destination credentials may be present. |
+| `listDestinationsAtLevel(cfg, level, logger?)` | Fetch the complete `subaccount` or `instance` collection without the SDK cache. Basic credentials remain only in the explicit `User`/`Password` fields; `originalProperties` excludes known credential, token, authorization-header, and certificate material while preserving non-secret custom properties. |
 | `lookupDestination(cfg, name, logger?)` | Resolve a destination (works with BasicAuth destinations, no user JWT). |
 | `lookupDestinationWithUserToken(cfg, name, userJwt, logger?)` | The PP primitive — per-user destination + `PerUserAuthTokens`. JWT-only (anti-footgun). |
 | `lookupDestinationWithUserTokenUncached(cfg, name, userJwt, logger?)` | Same PP result with `useCache:false`; failed or successful resolutions cannot affect a later lookup. |

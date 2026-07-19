@@ -25,6 +25,7 @@ vi.stubGlobal('fetch', mockFetch);
 const {
   DestinationServiceRequestError,
   listDestinationsAtLevel,
+  lookupDestination,
   lookupDestinationWithUserToken,
   lookupDestinationWithUserTokenUncached,
   resolveBTPDestination,
@@ -52,6 +53,16 @@ const TEST_BTP_CONFIG: BTPConfig = {
   connectivityTokenUrl: 'https://test.auth.example.com/oauth/token',
 };
 
+function serializedError(error: unknown): string {
+  if (!(error instanceof Error)) return JSON.stringify(error);
+  return [
+    error.message,
+    error.stack,
+    JSON.stringify(error, Object.getOwnPropertyNames(error)),
+    String((error as Error & { cause?: unknown }).cause),
+  ].join('\n');
+}
+
 describe('listDestinationsAtLevel', () => {
   beforeEach(() => {
     mockFetch.mockReset();
@@ -77,6 +88,7 @@ describe('listDestinationsAtLevel', () => {
             URL: 'http://a4h.internal:50000',
             Authentication: 'PrincipalPropagation',
             ProxyType: 'OnPremise',
+            User: 'SENTINEL_COLLECTION_USER',
             Password: 'sensitive',
             'sap-sysid': 'A4H',
             'sap-client': '100',
@@ -99,14 +111,18 @@ describe('listDestinationsAtLevel', () => {
       Name: 'ARC1_A4H_100_PP',
       Type: 'HTTP',
       'sap-client': '100',
+      User: 'SENTINEL_COLLECTION_USER',
+      Password: 'sensitive',
     });
     expect(result[0].originalProperties).toMatchObject({
       'sap-sysid': 'A4H',
       'arc1.enabled': 'true',
-      Password: 'sensitive',
     });
+    expect(result[0].originalProperties).not.toHaveProperty('User');
+    expect(result[0].originalProperties).not.toHaveProperty('Password');
     expect(result[0].originalProperties).not.toHaveProperty('authTokens');
     expect(result[0].originalProperties).not.toHaveProperty('certificates');
+    expect(JSON.stringify(result[0].originalProperties)).not.toContain('SENTINEL_COLLECTION_USER');
   });
 
   it('returns a typed body-free error for a failed collection request', async () => {
@@ -140,6 +156,176 @@ describe('listDestinationsAtLevel', () => {
     expect(error).toMatchObject({ operation: 'token' });
     expect(JSON.stringify(error, Object.getOwnPropertyNames(error))).not.toContain('must-never-escape');
     expect(error.cause).toBeUndefined();
+  });
+});
+
+describe('lookupDestination', () => {
+  beforeEach(() => {
+    mockFetch.mockReset();
+  });
+
+  it('returns Basic credentials only on a successful Find response', async () => {
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ access_token: 'service-token', expires_in: 3600 }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          destinationConfiguration: {
+            Name: 'ARC1_A4H_100_BASIC',
+            URL: 'https://a4h.internal:50001',
+            Authentication: 'BasicAuthentication',
+            ProxyType: 'OnPremise',
+            User: 'SENTINEL_BASIC_USER',
+            Password: 'SENTINEL_BASIC_PASSWORD',
+            clientSecret: 'SENTINEL_CLIENT_SECRET',
+            tokenServiceUser: 'SENTINEL_TOKEN_USER',
+            tokenServicePassword: 'SENTINEL_TOKEN_PASSWORD',
+            KeyStorePassword: 'SENTINEL_KEYSTORE_PASSWORD',
+            SystemUser: 'SENTINEL_SYSTEM_USER',
+            authTokens: [{ value: 'SENTINEL_AUTH_TOKEN' }],
+            certificates: [{ content: 'SENTINEL_CERTIFICATE' }],
+            headers: {
+              Authorization: 'SENTINEL_AUTHORIZATION_HEADER',
+              'x-safe-header': 'safe-value',
+            },
+            'sap-sysid': 'A4H',
+            'sap-client': '100',
+            Description: 'A4H shared reader',
+            Preemptive: 'true',
+            'arc1.enabled': 'true',
+          },
+        }),
+      });
+
+    const destination = await lookupDestination(TEST_BTP_CONFIG, 'ARC1_A4H_100_BASIC');
+
+    expect(destination).toMatchObject({
+      Name: 'ARC1_A4H_100_BASIC',
+      User: 'SENTINEL_BASIC_USER',
+      Password: 'SENTINEL_BASIC_PASSWORD',
+    });
+    expect(destination.originalProperties).toMatchObject({
+      'sap-sysid': 'A4H',
+      'sap-client': '100',
+      Description: 'A4H shared reader',
+      Preemptive: 'true',
+      'arc1.enabled': 'true',
+      headers: { 'x-safe-header': 'safe-value' },
+    });
+    expect(JSON.stringify(destination.originalProperties)).not.toContain('SENTINEL');
+    for (const key of [
+      'User',
+      'Password',
+      'clientSecret',
+      'tokenServiceUser',
+      'tokenServicePassword',
+      'KeyStorePassword',
+      'SystemUser',
+      'authTokens',
+      'certificates',
+    ]) {
+      expect(destination.originalProperties).not.toHaveProperty(key);
+    }
+  });
+
+  it.each([
+    {
+      name: 'network failure',
+      response: () => Promise.reject(new Error('SENTINEL_FIND_NETWORK_SECRET')),
+      status: undefined,
+    },
+    {
+      name: 'non-2xx response',
+      response: () =>
+        Promise.resolve(
+          new Response('SENTINEL_FIND_RESPONSE_SECRET', {
+            status: 403,
+            headers: { 'x-test-secret': 'SENTINEL_FIND_HEADER_SECRET' },
+          }),
+        ),
+      status: 403,
+    },
+    {
+      name: 'invalid JSON response',
+      response: () => Promise.resolve(new Response('SENTINEL_FIND_INVALID_JSON', { status: 200 })),
+      status: 200,
+    },
+    {
+      name: 'invalid response shape',
+      response: () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              destinationConfiguration: {
+                Name: 'ARC1_A4H_100_BASIC',
+                User: 'SENTINEL_SHAPE_USER',
+                Password: 'SENTINEL_SHAPE_PASSWORD',
+              },
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          ),
+        ),
+      status: 200,
+    },
+  ])('returns a typed body-free error for a Find $name', async ({ response, status }) => {
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ access_token: 'service-token', expires_in: 3600 }),
+      })
+      .mockImplementationOnce(response);
+
+    const error = await lookupDestination(TEST_BTP_CONFIG, 'ARC1_A4H_100_BASIC').catch((caught) => caught);
+
+    expect(error).toBeInstanceOf(DestinationServiceRequestError);
+    expect(error).toMatchObject({ operation: 'find', status });
+    expect(serializedError(error)).not.toContain('SENTINEL');
+  });
+
+  it.each([
+    {
+      name: 'network failure',
+      response: () => Promise.reject(new Error('SENTINEL_TOKEN_NETWORK_SECRET')),
+    },
+    {
+      name: 'non-2xx response',
+      response: () =>
+        Promise.resolve(
+          new Response('SENTINEL_TOKEN_RESPONSE_SECRET', {
+            status: 401,
+            headers: { 'x-test-secret': 'SENTINEL_TOKEN_HEADER_SECRET' },
+          }),
+        ),
+    },
+    {
+      name: 'invalid JSON response',
+      response: () => Promise.resolve(new Response('SENTINEL_TOKEN_INVALID_JSON', { status: 200 })),
+    },
+    {
+      name: 'invalid response shape',
+      response: () =>
+        Promise.resolve(
+          new Response(JSON.stringify({ access_token: '', detail: 'SENTINEL_TOKEN_SHAPE_SECRET' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        ),
+    },
+  ])('returns a typed body-free error for a token $name', async ({ response }) => {
+    mockFetch.mockImplementationOnce(response);
+
+    const error = await lookupDestination(TEST_BTP_CONFIG, 'ARC1_A4H_100_BASIC').catch((caught) => caught);
+
+    expect(error).toBeInstanceOf(DestinationServiceRequestError);
+    expect(error).toMatchObject({ operation: 'token' });
+    expect(serializedError(error)).not.toContain('SENTINEL');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -187,6 +373,8 @@ describe('lookupDestinationWithUserToken', () => {
         destinationConfiguration: {
           Name: 'SAP_TRIAL',
           Type: 'HTTP',
+          User: 'SENTINEL_PP_ORIGINAL_USER',
+          Password: 'SENTINEL_PP_ORIGINAL_PASSWORD',
           'sap-sysid': 'A4H',
           'sap-client': '100',
           'arc1.enabled': 'true',
@@ -211,6 +399,9 @@ describe('lookupDestinationWithUserToken', () => {
       'sap-sysid': 'A4H',
       'arc1.enabled': 'true',
     });
+    expect(JSON.stringify(result.destination.originalProperties)).not.toContain('SENTINEL');
+    expect(result.destination.originalProperties).not.toHaveProperty('User');
+    expect(result.destination.originalProperties).not.toHaveProperty('Password');
     expect(result.destination.originalProperties).not.toHaveProperty('authTokens');
     expect(result.authTokens.sapConnectivityAuth).toBe('Bearer saml-assertion-encoded');
   });
