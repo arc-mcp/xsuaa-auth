@@ -1,6 +1,6 @@
 {
   "name": "@arc-mcp/xsuaa-auth",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "XSUAA / OAuth authentication + BTP principal propagation for Model Context Protocol (MCP) servers built on Express and @modelcontextprotocol/sdk.",
   "license": "MIT",
   "author": "Marian Zeis",
