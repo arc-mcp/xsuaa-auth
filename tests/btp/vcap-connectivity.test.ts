@@ -10,9 +10,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   type BTPConfig,
+  BTPRequestTimeoutError,
   createConnectivityProxy,
+  DEFAULT_BTP_REQUEST_TIMEOUT_MS,
   DestinationServiceRequestError,
   lookupDestination,
+  MAX_BTP_REQUEST_TIMEOUT_MS,
   parseVCAPServices,
 } from '../../src/btp.js';
 
@@ -33,6 +36,15 @@ const BASE_BTP_CONFIG: BTPConfig = {
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+}
+
+function rejectWhenAborted(signal: AbortSignal | null | undefined): Promise<never> {
+  if (!signal) return Promise.reject(new Error('Expected an abort signal'));
+  return new Promise((_, reject) => {
+    const rejectWithReason = () => reject(signal.reason ?? new Error('Request aborted'));
+    if (signal.aborted) rejectWithReason();
+    else signal.addEventListener('abort', rejectWithReason, { once: true });
+  });
 }
 
 describe('parseVCAPServices', () => {
@@ -144,7 +156,10 @@ describe('lookupDestination (startup direct-fetch path)', () => {
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
       'https://destination.example.com/destination-configuration/v1/destinations/SAP_A4H',
-      { headers: { Authorization: 'Bearer destination-token' } },
+      expect.objectContaining({
+        headers: { Authorization: 'Bearer destination-token' },
+        signal: expect.any(AbortSignal),
+      }),
     );
   });
 
@@ -166,6 +181,7 @@ describe('createConnectivityProxy', () => {
     vi.stubGlobal('fetch', fetchMock);
   });
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
@@ -205,5 +221,49 @@ describe('createConnectivityProxy', () => {
   it('defaults the proxy port to 20003 when not provided', () => {
     const proxy = createConnectivityProxy({ ...BASE_BTP_CONFIG, connectivityProxyPort: '' });
     expect(proxy?.port).toBe(20003);
+  });
+
+  it('uses the default timeout and does not cache a timed-out connectivity token request', async () => {
+    vi.useFakeTimers();
+    let firstSignal: AbortSignal | undefined;
+    fetchMock
+      .mockImplementationOnce((_url, init?: RequestInit) => {
+        firstSignal = init?.signal ?? undefined;
+        return rejectWhenAborted(init?.signal);
+      })
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'retry-token', expires_in: 3600 }));
+    const proxy = createConnectivityProxy(BASE_BTP_CONFIG);
+    if (!proxy) throw new Error('Expected connectivity proxy');
+
+    const firstAttempt = proxy.getProxyToken();
+    const rejection = expect(firstAttempt).rejects.toMatchObject({
+      timeoutMs: DEFAULT_BTP_REQUEST_TIMEOUT_MS,
+    });
+    await vi.advanceTimersByTimeAsync(DEFAULT_BTP_REQUEST_TIMEOUT_MS - 1);
+    expect(firstSignal?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await rejection;
+    expect(firstSignal?.aborted).toBe(true);
+    expect(await proxy.getProxyToken()).toBe('retry-token');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('caps an oversized connectivity request timeout', async () => {
+    vi.useFakeTimers();
+    let requestSignal: AbortSignal | undefined;
+    fetchMock.mockImplementationOnce((_url, init?: RequestInit) => {
+      requestSignal = init?.signal ?? undefined;
+      return rejectWhenAborted(init?.signal);
+    });
+    const proxy = createConnectivityProxy({ ...BASE_BTP_CONFIG, requestTimeoutMs: Number.MAX_SAFE_INTEGER });
+    if (!proxy) throw new Error('Expected connectivity proxy');
+
+    const request = proxy.getProxyToken();
+    const rejection = expect(request).rejects.toBeInstanceOf(BTPRequestTimeoutError);
+    await vi.advanceTimersByTimeAsync(MAX_BTP_REQUEST_TIMEOUT_MS - 1);
+    expect(requestSignal?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await rejection;
+    expect(requestSignal?.reason).toMatchObject({ timeoutMs: MAX_BTP_REQUEST_TIMEOUT_MS });
   });
 });

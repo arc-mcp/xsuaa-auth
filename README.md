@@ -177,6 +177,7 @@ const { url, username, password, client, proxy } = await resolveBTPDestination('
 
 // Per-user principal propagation — pass the verified user JWT:
 const btpConfig = parseVCAPServices(process.env)!;
+btpConfig.requestTimeoutMs = 15_000; // optional; defaults to 10s and is capped at 60s
 const subaccountDestinations = await listDestinationsAtLevel(btpConfig, 'subaccount', logger);
 const { destination, authTokens } = await lookupDestinationWithUserToken(
   btpConfig,
@@ -210,6 +211,10 @@ Which `PerUserAuthTokens` field is populated depends on the destination's `Authe
 | `lookupDestinationWithUserTokenUncached(cfg, name, userJwt, logger?)` | Same PP result with `useCache:false`; failed or successful resolutions cannot affect a later lookup. |
 | `createConnectivityProxy(cfg, locationId?, logger?)` | A `BTPProxyConfig` descriptor for the Cloud Connector connectivity proxy. |
 | `resolveBTPDestination(name, logger?)` | Convenience: destination → `{ url, username, password, client, proxy }`. |
+| `BTPRequestTimeoutError` | Typed timeout from direct BTP requests that are not intentionally wrapped in a more specific service error. Its `timeoutMs` field contains the effective bounded timeout. |
+| `DEFAULT_BTP_REQUEST_TIMEOUT_MS` / `MAX_BTP_REQUEST_TIMEOUT_MS` | Public 10-second default and 60-second hard cap for consumers that expose the setting. |
+
+Direct Destination and Connectivity Service requests use one abortable timeout for the fetch and response body together. Configure it with `BTPConfig.requestTimeoutMs`; invalid or non-positive values use the 10-second default, and values above 60 seconds are capped. This applies to service-token acquisition, collection/Find calls, Connectivity proxy tokens, and the direct principal-propagation fallback. The SAP Cloud SDK-owned per-user destination lookup manages its own transport and is not covered by this option.
 
 ---
 

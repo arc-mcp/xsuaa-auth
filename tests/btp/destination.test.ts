@@ -21,6 +21,10 @@ vi.mock('@sap-cloud-sdk/connectivity', () => ({
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 // Import AFTER mocking.
 const {
   DestinationServiceRequestError,
@@ -61,6 +65,15 @@ function serializedError(error: unknown): string {
     JSON.stringify(error, Object.getOwnPropertyNames(error)),
     String((error as Error & { cause?: unknown }).cause),
   ].join('\n');
+}
+
+function rejectWhenAborted(signal: AbortSignal | null | undefined): Promise<never> {
+  if (!signal) return Promise.reject(new Error('Expected an abort signal'));
+  return new Promise((_, reject) => {
+    const rejectWithReason = () => reject(signal.reason ?? new Error('Request aborted'));
+    if (signal.aborted) rejectWithReason();
+    else signal.addEventListener('abort', rejectWithReason, { once: true });
+  });
 }
 
 describe('listDestinationsAtLevel', () => {
@@ -104,7 +117,10 @@ describe('listDestinationsAtLevel', () => {
     expect(mockFetch).toHaveBeenNthCalledWith(
       2,
       `${TEST_BTP_CONFIG.destinationUrl}/destination-configuration/v1/${collection}`,
-      { headers: { Authorization: 'Bearer service-token' } },
+      expect.objectContaining({
+        headers: { Authorization: 'Bearer service-token' },
+        signal: expect.any(AbortSignal),
+      }),
     );
     expect(result).toHaveLength(1);
     expect(result[0]).toMatchObject({
@@ -156,6 +172,26 @@ describe('listDestinationsAtLevel', () => {
     expect(error).toMatchObject({ operation: 'token' });
     expect(JSON.stringify(error, Object.getOwnPropertyNames(error))).not.toContain('must-never-escape');
     expect(error.cause).toBeUndefined();
+  });
+
+  it('aborts a stalled Destination Service token request', async () => {
+    vi.useFakeTimers();
+    let requestSignal: AbortSignal | undefined;
+    mockFetch.mockImplementationOnce((_url, init?: RequestInit) => {
+      requestSignal = init?.signal ?? undefined;
+      return rejectWhenAborted(init?.signal);
+    });
+
+    const result = listDestinationsAtLevel({ ...TEST_BTP_CONFIG, requestTimeoutMs: 25 }, 'subaccount').catch(
+      (error) => error,
+    );
+    await vi.advanceTimersByTimeAsync(25);
+
+    const error = await result;
+    expect(requestSignal?.aborted).toBe(true);
+    expect(error).toBeInstanceOf(DestinationServiceRequestError);
+    expect(error).toMatchObject({ operation: 'token' });
+    expect(serializedError(error)).not.toContain(TEST_BTP_CONFIG.destinationSecret);
   });
 });
 
@@ -326,6 +362,38 @@ describe('lookupDestination', () => {
     expect(error).toMatchObject({ operation: 'token' });
     expect(serializedError(error)).not.toContain('SENTINEL');
     expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('aborts a stalled Destination Service Find response body', async () => {
+    vi.useFakeTimers();
+    let findSignal: AbortSignal | undefined;
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ access_token: 'service-token', expires_in: 3600 }),
+      })
+      .mockImplementationOnce((_url, init?: RequestInit) => {
+        findSignal = init?.signal ?? undefined;
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          // The wrapper must settle even if response-body consumption ignores the signal.
+          json: () => new Promise<never>(() => undefined),
+        });
+      });
+
+    const result = lookupDestination({ ...TEST_BTP_CONFIG, requestTimeoutMs: 25 }, 'ARC1_A4H_100_BASIC').catch(
+      (error) => error,
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(25);
+
+    const error = await result;
+    expect(findSignal?.aborted).toBe(true);
+    expect(error).toBeInstanceOf(DestinationServiceRequestError);
+    expect(error).toMatchObject({ operation: 'find' });
   });
 });
 
@@ -688,6 +756,30 @@ describe('lookupDestinationWithUserToken', () => {
 
     const result = await lookupDestinationWithUserToken(TEST_BTP_CONFIG, 'SAP_PP', USER_JWT);
     expect(result.authTokens.sapConnectivityAuth).toBeUndefined();
+  });
+
+  it('aborts a stalled jwt-bearer fallback and returns no propagated identity', async () => {
+    vi.useFakeTimers();
+    mockGetDestination.mockResolvedValueOnce({
+      name: 'SAP_PP',
+      url: 'http://sap:50000',
+      authentication: 'PrincipalPropagation',
+      proxyType: 'OnPremise',
+      username: '',
+      password: '',
+      authTokens: null,
+    });
+    let exchangeSignal: AbortSignal | undefined;
+    mockFetch.mockImplementationOnce((_url, init?: RequestInit) => {
+      exchangeSignal = init?.signal ?? undefined;
+      return rejectWhenAborted(init?.signal);
+    });
+
+    const result = lookupDestinationWithUserToken({ ...TEST_BTP_CONFIG, requestTimeoutMs: 25 }, 'SAP_PP', USER_JWT);
+    await vi.advanceTimersByTimeAsync(25);
+
+    await expect(result).resolves.toMatchObject({ authTokens: {} });
+    expect(exchangeSignal?.aborted).toBe(true);
   });
 });
 

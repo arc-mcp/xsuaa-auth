@@ -33,6 +33,58 @@ export interface BTPConfig {
   connectivityClientId: string;
   connectivitySecret: string;
   connectivityTokenUrl: string;
+
+  /** Timeout for direct BTP service fetches, including response-body consumption. Default: 10 seconds. */
+  requestTimeoutMs?: number;
+}
+
+/** Default timeout for direct Destination and Connectivity service requests. */
+export const DEFAULT_BTP_REQUEST_TIMEOUT_MS = 10_000;
+
+/** Hard upper bound for a caller-provided BTP request timeout. */
+export const MAX_BTP_REQUEST_TIMEOUT_MS = 60_000;
+
+/** Distinguishes a locally aborted BTP service request from other network failures. */
+export class BTPRequestTimeoutError extends Error {
+  constructor(readonly timeoutMs: number) {
+    super(`BTP service request timed out after ${timeoutMs} ms`);
+    this.name = 'BTPRequestTimeoutError';
+  }
+}
+
+function boundedRequestTimeoutMs(timeoutMs?: number): number {
+  if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return DEFAULT_BTP_REQUEST_TIMEOUT_MS;
+  }
+  return Math.max(1, Math.min(Math.floor(timeoutMs), MAX_BTP_REQUEST_TIMEOUT_MS));
+}
+
+/** Run a complete BTP fetch/body operation under one abortable timeout. */
+export async function withBtpRequestTimeout<T>(
+  timeoutMs: number | undefined,
+  operation: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const boundedTimeoutMs = boundedRequestTimeoutMs(timeoutMs);
+  const controller = new AbortController();
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => {
+      const error = new BTPRequestTimeoutError(boundedTimeoutMs);
+      controller.abort(error);
+      reject(error);
+    }, boundedTimeoutMs);
+    timeout.unref?.();
+  });
+  try {
+    return await Promise.race([operation(controller.signal), timeoutPromise]);
+  } catch (error) {
+    if (controller.signal.aborted && controller.signal.reason instanceof BTPRequestTimeoutError) {
+      throw controller.signal.reason;
+    }
+    throw error;
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }
 
 // ─── VCAP Parsing ────────────────────────────────────────────────────
@@ -130,6 +182,7 @@ export async function fetchClientCredentialsToken(
   tokenUrl: string,
   clientId: string,
   clientSecret: string,
+  timeoutMs?: number,
 ): Promise<{ accessToken: string; expiresIn: number }> {
   const body = new URLSearchParams({
     grant_type: 'client_credentials',
@@ -137,17 +190,20 @@ export async function fetchClientCredentialsToken(
     client_secret: clientSecret,
   });
 
-  const resp = await fetch(tokenUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: body.toString(),
+  return withBtpRequestTimeout(timeoutMs, async (signal) => {
+    const resp = await fetch(tokenUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+      signal,
+    });
+
+    if (!resp.ok) {
+      const text = await resp.text();
+      throw new Error(`Token endpoint returned HTTP ${resp.status}: ${text.slice(0, 200)}`);
+    }
+
+    const data = (await resp.json()) as { access_token: string; expires_in: number };
+    return { accessToken: data.access_token, expiresIn: data.expires_in };
   });
-
-  if (!resp.ok) {
-    const text = await resp.text();
-    throw new Error(`Token endpoint returned HTTP ${resp.status}: ${text.slice(0, 200)}`);
-  }
-
-  const data = (await resp.json()) as { access_token: string; expires_in: number };
-  return { accessToken: data.access_token, expiresIn: data.expires_in };
 }

@@ -239,6 +239,7 @@ export interface BTPConfig {
   destinationUrl: string; destinationClientId: string; destinationSecret: string; destinationTokenUrl: string;
   connectivityProxyHost: string; connectivityProxyPort: string; connectivityClientId: string;
   connectivitySecret: string; connectivityTokenUrl: string;
+  requestTimeoutMs?: number;
 }
 export interface Destination {
   Name: string; URL: string; Authentication: string; ProxyType: string; User: string; Password: string;
@@ -248,6 +249,9 @@ export interface Destination {
 export type DestinationLevel = 'subaccount' | 'instance';
 export interface BTPProxyConfig { host: string; port: number; protocol: string; getProxyToken: () => Promise<string>; locationId?: string }
 export interface PerUserAuthTokens { sapConnectivityAuth?: string; bearerToken?: string; ppProxyAuth?: string; samlAssertionAuthorization?: string }  // samlAssertionAuthorization: ready-to-use Authorization header value for SAMLAssertion destinations (S/4HANA Public Cloud / BAS flow)
+export const DEFAULT_BTP_REQUEST_TIMEOUT_MS: 10000;
+export const MAX_BTP_REQUEST_TIMEOUT_MS: 60000;
+export class BTPRequestTimeoutError extends Error { readonly timeoutMs: number }
 
 export function parseVCAPServices(env?: NodeJS.ProcessEnv, logger?: Logger): BTPConfig | null;   // env defaults to process.env; logger defaults to no-op
 export function lookupDestination(btpConfig: BTPConfig, name: string, logger?: Logger): Promise<Destination>;
@@ -273,6 +277,7 @@ export function resolveBTPDestination(name: string, logger?: Logger): Promise<{
 - **The package returns credentials + a proxy descriptor; it never applies them.** What to do when no PP token is produced (arc-1 throws; LISA falls back to BasicAuth) is **consumer policy** — `lookupDestinationWithUserToken` returns a possibly-empty `PerUserAuthTokens` and the consumer decides.
 - **`lookupDestinationWithUserToken` is JWT-only (anti-footgun):** it validates `userJwt` is a 3-segment JWT and throws a typed error otherwise — PP needs a per-user user token, not an API key. (arc-1 guards this at its call site today; the package now guards it for every consumer.)
 - **`parseVCAPServices` is a helper, not policy:** destination/connectivity *names* and env semantics stay consumer-owned (passed as params). `ttlSeconds <= 0` normalizes to "no expiry" consistently in both the DCR store and `OAuthStateCodec`.
+- **Direct BTP requests are bounded:** Destination/Connectivity service-token fetches, collection/Find calls, Connectivity proxy-token fetches, and the direct jwt-bearer fallback share one abortable fetch-plus-body timeout. `BTPConfig.requestTimeoutMs` defaults to 10 seconds for invalid, absent, or non-positive values and is capped at 60 seconds. The SAP Cloud SDK-owned per-user destination lookup is outside this direct-fetch boundary.
 
 ---
 
