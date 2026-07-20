@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.7](https://github.com/arc-mcp/xsuaa-auth/compare/v0.1.6...v0.1.7) (2026-07-20)
+
+
+### Bug Fixes
+
+* time out BTP service requests ([#35](https://github.com/arc-mcp/xsuaa-auth/issues/35)) ([70196f9](https://github.com/arc-mcp/xsuaa-auth/commit/70196f9d928cf990e80eb02d35abd41474020c50))
+
 ## [0.1.6](https://github.com/arc-mcp/xsuaa-auth/compare/v0.1.5...v0.1.6) (2026-07-19)
 
 
