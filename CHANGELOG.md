@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/arc-mcp/xsuaa-auth/compare/v1.0.0...v1.0.1) (2026-07-27)
+
+
+### Bug Fixes
+
+* **deps:** align Biome schema with installed version ([#46](https://github.com/arc-mcp/xsuaa-auth/issues/46)) ([090144d](https://github.com/arc-mcp/xsuaa-auth/commit/090144d3e83d422a0e83550befb73ae7d47e3f5b))
+
 ## [1.0.0](https://github.com/arc-mcp/xsuaa-auth/compare/v0.1.8...v1.0.0) (2026-07-23)
 
 
