@@ -65,7 +65,7 @@
     "*.{ts,js,json}": "biome check --write --no-errors-on-unmatched"
   },
   "dependencies": {
-    "@sap-cloud-sdk/connectivity": "^4.7.0",
+    "@sap-cloud-sdk/connectivity": "^4.8.0",
     "@sap/xssec": "^4.13.3"
   },
   "peerDependencies": {
