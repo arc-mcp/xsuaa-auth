@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.2](https://github.com/arc-mcp/xsuaa-auth/compare/v1.0.1...v1.0.2) (2026-08-10)
+
+
+### Bug Fixes
+
+* **deps:** remediate npm audit findings ([#52](https://github.com/arc-mcp/xsuaa-auth/issues/52)) ([cbcfd9b](https://github.com/arc-mcp/xsuaa-auth/commit/cbcfd9b4ea0ce1c2b5f9fe76e165371b45032036))
+
 ## [1.0.1](https://github.com/arc-mcp/xsuaa-auth/compare/v1.0.0...v1.0.1) (2026-07-27)
 
 
