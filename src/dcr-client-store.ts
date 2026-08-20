@@ -35,6 +35,8 @@
  */
 
 import crypto from 'node:crypto';
+import { cimdRedirectUriRegistered } from './cimd-document.js';
+import { type CimdResolution, CimdResolver, type CimdResolverOptions } from './cimd-resolver.js';
 import type { OAuthClientInformationFull, OAuthRegisteredClientsStore } from './internal/sdk.js';
 import type { Logger } from './logger.js';
 import { noopLogger } from './logger.js';
@@ -144,6 +146,19 @@ export interface StatelessDcrClientStoreOptions {
 
   /** Injected structural logger. Default: silent no-op. */
   logger?: Logger;
+
+  /**
+   * Enable Client ID Metadata Document identities (CIMD, SEP-991) alongside stateless DCR.
+   *
+   * Omitted (the default) means CIMD is OFF and an `https:` client_id is refused like any
+   * other unrecognised value — which is the correct posture until the consumer also
+   * advertises `client_id_metadata_document_supported`, because a client that sees the
+   * flag stops using DCR.
+   *
+   * Enabling this makes the server fetch a URL chosen by an unauthenticated caller. Read
+   * the SSRF controls in `cimd-fetch.ts` before turning it on.
+   */
+  cimd?: CimdResolverOptions;
 }
 
 // ─── Store ────────────────────────────────────────────────────────────
@@ -156,6 +171,7 @@ export class StatelessDcrClientStore implements OAuthRegisteredClientsStore {
   private readonly idPrefix: string;
   private readonly redirectUriPatterns: readonly string[];
   private readonly logger: Logger;
+  private readonly cimd: CimdResolver | undefined;
 
   constructor(
     xsuaaClientId: string,
@@ -193,6 +209,7 @@ export class StatelessDcrClientStore implements OAuthRegisteredClientsStore {
     this.xsuaaClient = buildXsuaaDefaultClient(xsuaaClientId, xsuaaClientSecret, defaultRedirectUris);
     this.ttlSeconds = options.ttlSeconds ?? DEFAULT_TTL_SECONDS;
     this.now = options.now ?? (() => Date.now());
+    this.cimd = options.cimd ? new CimdResolver({ logger: this.logger, ...options.cimd }) : undefined;
   }
 
   // ── OAuthRegisteredClientsStore implementation ──
@@ -200,6 +217,15 @@ export class StatelessDcrClientStore implements OAuthRegisteredClientsStore {
   async getClient(clientId: string): Promise<OAuthClientInformationFull | undefined> {
     if (clientId === this.xsuaaClient.client_id) {
       return this.xsuaaClient;
+    }
+
+    // CIMD (SEP-991): an `https:` client_id IS a Client Identifier URL. The branch is
+    // deliberately TERMINAL — a CIMD failure never falls through to the DCR path below,
+    // because a fallback is precisely how a refused fetch becomes an accepted one. The
+    // two id spaces cannot collide: a DCR id starts with `idPrefix` and the XSUAA id is
+    // a binding identifier, and neither parses as an `https:` URL.
+    if (CimdResolver.isUrlClientId(clientId)) {
+      return (await this.resolveCimd(clientId))?.client;
     }
 
     if (!clientId.startsWith(this.idPrefix)) {
@@ -309,6 +335,13 @@ export class StatelessDcrClientStore implements OAuthRegisteredClientsStore {
    * map, both of which undermine the "no state" goal. We accept the
    * regression: affected clients re-register on encoding-variant mismatch,
    * which is exactly what they did under the old store after every restart.
+   *
+   * For CIMD clients this is likewise a no-op, and there it is not a regression but the
+   * only correct behaviour: the redirect URI list is the CLIENT's published document, so
+   * widening it server-side would assert something the document does not say. The early
+   * return below already covers them — every client except the pre-registered XSUAA one
+   * falls out on the first line — so no CIMD branch is needed here, only this note and
+   * the test that pins it.
    */
   ensureRedirectUri(clientId: string, uri: string): void {
     if (clientId !== this.xsuaaClient.client_id) return;
@@ -355,9 +388,63 @@ export class StatelessDcrClientStore implements OAuthRegisteredClientsStore {
     if (clientId === this.xsuaaClient.client_id) {
       return matchesRedirectPattern(uri, this.redirectUriPatterns) ? 'ok' : 'unregistered';
     }
+    if (CimdResolver.isUrlClientId(clientId)) {
+      // Resolve through the SAME cache entry `/authorize` used. A document edited
+      // mid-flight therefore cannot turn a granted authorization into a puzzling refusal;
+      // the exposure window is the cache TTL, not the document author's whim.
+      const resolution = await this.resolveCimd(clientId);
+      if (!resolution) return 'unknown_client';
+      return cimdRedirectUriRegistered(uri, resolution.client.redirect_uris) ? 'ok' : 'unregistered';
+    }
     const info = await this.getClient(clientId);
     if (!info) return 'unknown_client';
-    return info.redirect_uris.includes(uri) ? 'ok' : 'unregistered';
+    // Matches the SDK's `/authorize` comparison rather than a bare `includes`. The two
+    // ends must agree: `/authorize` already applies RFC 8252 loopback port relaxation, so
+    // a stricter check here refuses a code that was ALREADY minted for this URI — no
+    // security gained, a broken native client lost. See `cimdRedirectUriMatches`.
+    return cimdRedirectUriRegistered(uri, info.redirect_uris) ? 'ok' : 'unregistered';
+  }
+
+  /**
+   * Resolve a CIMD `client_id`, emitting the audit trail. Returns `undefined` on every
+   * failure — the reason reaches the operator's audit sink and stops there, so nothing
+   * about the outbound attempt can leak into an OAuth error response.
+   */
+  private async resolveCimd(clientId: string): Promise<CimdResolution | undefined> {
+    if (!this.cimd) {
+      // An `https:` id arrived while CIMD is off. Refuse it rather than letting it reach
+      // the DCR path, and record it: it means a client saw the capability flag somewhere.
+      this.emitCimdFailure(clientId, 'cimd_disabled', false);
+      return undefined;
+    }
+    const result = await this.cimd.resolve(clientId);
+    if (!result.ok) {
+      this.emitCimdFailure(clientId, result.reason, result.cacheHit);
+      return undefined;
+    }
+    this.logger.emitAudit?.({
+      timestamp: new Date().toISOString(),
+      level: 'info',
+      event: 'oauth_cimd_resolved',
+      clientIdUrl: clientId,
+      redirectUriCount: result.resolution.client.redirect_uris.length,
+      cacheHit: result.cacheHit,
+    });
+    return result.resolution;
+  }
+
+  private emitCimdFailure(clientId: string, reason: string, cacheHit: boolean): void {
+    this.logger.debug('CIMD client rejected', { clientId, reason });
+    this.logger.emitAudit?.({
+      timestamp: new Date().toISOString(),
+      // A blocked address or a refused host is someone aiming this server at something it
+      // would not reach — worth alerting on, unlike an ordinary malformed document.
+      level: reason === 'blocked_address' || reason === 'host_not_allowed' ? 'warn' : 'info',
+      event: 'oauth_cimd_rejected',
+      clientIdUrl: clientId,
+      reason,
+      cacheHit,
+    });
   }
 
   // ── Internals: encode / decode / sign / verify ──
