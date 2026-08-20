@@ -119,6 +119,76 @@ export type ExpandScopes = (scopes: string[]) => string[];
 export function loadXsuaaCredentials(env?: NodeJS.ProcessEnv): XsuaaCredentials;   // reads + validates the bound XSUAA service (VCAP_SERVICES / service binding)
 export function resolveAppUrl(env?: NodeJS.ProcessEnv, options?: { publicUrlEnvVar?: string; port?: number }): string;   // VCAP_APPLICATION route, overridable by a configurable public-URL env var (e.g. ARC1_PUBLIC_URL)
 
+// ─── CIMD (SEP-991) — Client ID Metadata Documents, resolved alongside DCR ───
+// A `client_id` shaped as an `https:` URL is fetched, validated, and cached as a client
+// identity instead of looked up in the DCR store. Passing `cimd` to
+// StatelessDcrClientStoreOptions / CreateXsuaaOAuthProviderOptions is what turns this on;
+// omitting it leaves `getClient` byte-identical to pre-CIMD behavior. A `client_id` that
+// parses as `https:` while `cimd` is unset is refused like any other unknown value — it
+// never falls through to the DCR path.
+export type CimdFetchFailureReason =
+  | 'scheme' | 'userinfo' | 'shape' | 'blocked_host' | 'host_not_allowed' | 'dns_failure'
+  | 'blocked_address' | 'redirect_refused' | 'tls_failure' | 'timeout' | 'too_large'
+  | 'bad_status' | 'bad_content_type' | 'content_encoding_refused' | 'network_error'
+  | 'proxy_config_invalid' | 'proxy_unreachable' | 'proxy_refused';
+export interface CimdFetchOptions {
+  allowedHosts?: readonly string[];   // exact host or single-label wildcard (`*.vscode.dev`); empty/omitted = open
+  connectTimeoutMs?: number;          // default 2000
+  globalTimeoutMs?: number;           // default 5000
+  maxBytes?: number;                  // default 5120 (draft's 5 KiB cap), enforced while streaming
+  proxyUrl?: string;                  // explicit forward-proxy URL; tunnels CONNECT to the validated IP, never the hostname
+}
+export type CimdFetchResult =
+  | { ok: true; body: string; cacheControl?: string; expires?: string; resolvedAddress: string }
+  | { ok: false; reason: CimdFetchFailureReason };
+export function validateClientIdUrl(raw: string, allowedHosts?: readonly string[]): { ok: true; url: URL } | { ok: false; reason: CimdFetchFailureReason };
+export function fetchClientIdMetadataDocument(url: string, opts?: CimdFetchOptions): Promise<CimdFetchResult>;
+export function proxyFromEnvironment(targetHost: string, env?: Record<string, string | undefined>): string | undefined;   // reads HTTPS_PROXY/https_proxy with NO_PROXY handling; not read implicitly by fetchClientIdMetadataDocument
+
+export type CimdDocumentRejection =
+  | 'not_json' | 'not_object' | 'client_id_missing' | 'client_id_mismatch'
+  | 'redirect_uris_missing' | 'too_many_redirect_uris' | 'redirect_uri_invalid'
+  | 'symmetric_auth_method' | 'no_supported_grant_types' | 'client_name_too_long';
+export interface CimdDocumentPolicy {
+  maxRedirectUris?: number;           // default 16
+  maxClientNameLength?: number;       // default 200
+  redirectUriPatterns?: readonly string[]; // default XSUAA_DEFAULT_REDIRECT_URI_PATTERNS
+}
+export function validateCimdDocument(clientIdUrl: string, body: string, policy?: CimdDocumentPolicy): { ok: true; client: OAuthClientInformationFull; applicationType?: string } | { ok: false; reason: CimdDocumentRejection };
+// RFC 8252 §7.3 loopback port relaxation, mirrored byte-for-byte from the SDK's own
+// `/authorize` matcher and applied to CIMD and DCR redirect URIs alike: exact match, OR —
+// when both URIs target `localhost` / `127.0.0.1` / `[::1]` — equal scheme/host/path/query
+// with the port free. `application_type` is parsed and recorded but never consulted here.
+export function cimdRedirectUriMatches(requested: string, registered: string): boolean;
+
+export type CimdResolutionFailure = CimdFetchFailureReason | CimdDocumentRejection;
+export interface CimdResolution { client: OAuthClientInformationFull; applicationType?: string }
+export interface CimdCacheOptions {
+  maxEntries?: number;                // default 256, LRU eviction
+  defaultTtlSeconds?: number;         // default 900 — used when the response has no cache headers
+  minTtlSeconds?: number;             // default 300 — floor on any header-derived TTL
+  maxTtlSeconds?: number;             // default 3600 — ceiling on any header-derived TTL
+  negativeTtlSeconds?: number;        // default 300 — a validation failure
+  transientNegativeTtlSeconds?: number; // default 30 — a network-level failure
+  now?: () => number;
+}
+export interface CimdResolverOptions {
+  allowedHosts?: readonly string[];
+  proxyUrl?: string;
+  fetch?: Pick<CimdFetchOptions, 'connectTimeoutMs' | 'globalTimeoutMs' | 'maxBytes'>;
+  document?: CimdDocumentPolicy;
+  cache?: CimdCacheOptions;
+  logger?: Logger;
+}
+export class CimdResolver {
+  constructor(options?: CimdResolverOptions);
+  static isUrlClientId(clientId: string): boolean;   // parsed-URL classification, never a raw startsWith('https://')
+  resolve(clientId: string): Promise<
+    | { ok: true; resolution: CimdResolution; cacheHit: boolean }
+    | { ok: false; reason: CimdResolutionFailure; cacheHit: boolean }
+  >;
+}
+
 // ─── Stateless DCR client store ───
 export interface StatelessDcrClientStoreOptions {
   clientIdPrefix?: string;            // default 'mcp-'
@@ -128,6 +198,7 @@ export interface StatelessDcrClientStoreOptions {
   defaultRedirectUris?: readonly string[];  // default XSUAA_DEFAULT_REDIRECT_URIS
   now?: () => number;
   logger?: Logger;
+  cimd?: CimdResolverOptions;         // omitted = CIMD off; an https: client_id is then refused, never routed to DCR
 }
 export class StatelessDcrClientStore /* implements OAuthRegisteredClientsStore */ {
   constructor(xsuaaClientId: string, xsuaaClientSecret: string, signingSecret: string, options?: StatelessDcrClientStoreOptions);
@@ -158,6 +229,7 @@ export interface CreateXsuaaOAuthProviderOptions {
   dcrTtlSeconds?: number; stateTtlSeconds?: number; dcrSigningSecret?: string;
   redirectUriPatterns?: readonly string[]; defaultRedirectUris?: readonly string[];
   callbackUrl?: string; logger?: Logger;
+  cimd?: CimdResolverOptions;   // passed straight through to StatelessDcrClientStoreOptions.cimd
 }
 export function createXsuaaOAuthProvider(
   credentials: XsuaaCredentials, appUrl: string, options?: CreateXsuaaOAuthProviderOptions,

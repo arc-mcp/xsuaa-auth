@@ -128,6 +128,30 @@ Each verifier also accepts **`acceptedScopes`** (default the arc-1 set `['read',
 
 ---
 
+## CIMD (SEP-991) — Client ID Metadata Documents
+
+The MCP authorization spec's 2026-07-28 revision deprecates Dynamic Client Registration in favor of **Client ID Metadata Documents**: instead of registering, a client's `client_id` *is* an HTTPS URL it hosts, pointing at a JSON document describing itself. The package resolves this alongside DCR — it does not replace it, and DCR keeps working unchanged for the duration of the spec's twelve-month deprecation window.
+
+```ts
+const { provider, clientStore } = createXsuaaOAuthProvider(credentials, appUrl, {
+  clientIdPrefix: 'myapp-',
+  cimd: {
+    // allowedHosts: ['claude.ai', '*.vscode.dev'],  // optional; empty/omitted = any HTTPS host
+    // proxyUrl: 'http://proxy.corp:3128',            // optional; only if egress requires a forward proxy
+  },
+});
+```
+
+Three things worth knowing before turning it on:
+
+- **Opt-in, and off by default.** Omitting `cimd` leaves `getClient` byte-identical to pre-CIMD behavior — an `https:`-shaped `client_id` is refused like any other unrecognized value, never routed to the DCR path.
+- **It makes an outbound HTTPS request to a URL supplied by an unauthenticated caller**, on the pre-authentication `/authorize` path. The fetch is hardened — HTTPS only, every resolved address checked against the RFC 6890 special-use ranges, the connection pinned against DNS rebinding, redirects refused, a 5 KiB streaming cap, no credentials sent, and nothing inside the fetched document is ever dereferenced — but the primitive itself (an authorization server fetching an attacker-chosen URL) is new. Consumers deployed next to infrastructure that turns "reach an internal address" into something more sensitive (e.g. a Cloud Connector bridging on-premises networks) should read the threat model before enabling this in production.
+- **The consumer's own metadata flag and this resolver must move together.** The MCP client SDK uses a URL `client_id` only when the authorization server's metadata advertises `client_id_metadata_document_supported: true` **and** the client holds a `clientMetadataUrl`; otherwise it silently falls back to DCR. Advertising the flag without passing `cimd` here — or the reverse — pushes a capable client onto a path guaranteed to fail. The flag itself is not part of this package; each consumer emits its own OAuth metadata document (arc-1 does this in `src/server/http.ts`).
+
+Not currently wired into the `setupHttpAuth` facade — reach it through `createXsuaaOAuthProvider` / `StatelessDcrClientStoreOptions` (Layer 2) as shown above. `docs/SPEC.md` §6 has the full type surface (`CimdResolver`, `validateCimdDocument`, `cimdRedirectUriMatches`, `fetchClientIdMetadataDocument`, `validateClientIdUrl`, `proxyFromEnvironment`, and their option/result types).
+
+---
+
 ## `AuthOptions`
 
 The facade's configuration object. All fields are optional except where noted.
