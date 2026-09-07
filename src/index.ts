@@ -8,6 +8,14 @@
 
 // ─── OAuth callback handler ──────────────────────────────────────────
 export { createOAuthCallbackHandler } from './callback.js';
+// ─── CIMD (Client ID Metadata Documents, SEP-991) ────────────────────
+export type { CimdCacheOptions } from './cimd-cache.js';
+export type { CimdDocumentPolicy, CimdDocumentRejection } from './cimd-document.js';
+export { cimdRedirectUriMatches, validateCimdDocument } from './cimd-document.js';
+export type { CimdFetchFailureReason, CimdFetchOptions, CimdFetchResult } from './cimd-fetch.js';
+export { fetchClientIdMetadataDocument, proxyFromEnvironment, validateClientIdUrl } from './cimd-fetch.js';
+export type { CimdResolution, CimdResolutionFailure, CimdResolverOptions } from './cimd-resolver.js';
+export { CimdResolver } from './cimd-resolver.js';
 // ─── Layer-0 config helpers ──────────────────────────────────────────
 export { loadXsuaaCredentials, resolveAppUrl } from './credentials.js';
 export type { StatelessDcrClientStoreOptions } from './dcr-client-store.js';
