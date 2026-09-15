@@ -22,6 +22,9 @@ const securityContextState: {
   logonName?: string;
   email?: string;
   exp?: number;
+  grantType?: string;
+  origin?: string;
+  attributes?: Record<string, unknown>;
 } = { scopes: new Set(), clientId: 'sb-stub' };
 
 const createSecurityContextMock = vi.fn(async () => ({
@@ -29,6 +32,13 @@ const createSecurityContextMock = vi.fn(async () => ({
   getClientId: () => securityContextState.clientId,
   getLogonName: () => securityContextState.logonName,
   getEmail: () => securityContextState.email,
+  getGrantType: () => securityContextState.grantType,
+  getOrigin: () => securityContextState.origin,
+  getUserName: () =>
+    securityContextState.grantType === 'client_credentials'
+      ? `client/${securityContextState.clientId}`
+      : `user/${securityContextState.origin}/${securityContextState.logonName}`,
+  getAttribute: (name: string) => securityContextState.attributes?.[name] || null,
   token: { payload: { exp: securityContextState.exp } },
 }));
 
@@ -45,7 +55,8 @@ vi.mock('@sap/xssec', () => {
 });
 
 // Import AFTER the mock is registered.
-const { createXsuaaTokenVerifier, qualifyXsuaaScopes, RESERVED_OAUTH_SCOPES } = await import('../src/index.js');
+const { createXsuaaTokenVerifier, qualifyXsuaaScopes, RESERVED_OAUTH_SCOPES, XsuaaUserTokenRequiredError } =
+  await import('../src/index.js');
 
 import { InvalidTokenError } from '../src/internal/sdk.js';
 import { makeCapturingLogger } from './helpers/test-logger.js';
@@ -104,6 +115,9 @@ describe('createXsuaaTokenVerifier (@sap/xssec mocked)', () => {
     securityContextState.logonName = undefined;
     securityContextState.email = undefined;
     securityContextState.exp = undefined;
+    securityContextState.grantType = 'authorization_code';
+    securityContextState.origin = 'ias';
+    securityContextState.attributes = undefined;
   });
 
   it('constructs the XsuaaService with the binding credentials', () => {
@@ -133,6 +147,64 @@ describe('createXsuaaTokenVerifier (@sap/xssec mocked)', () => {
     expect(info.scopes).toEqual(['read', 'write']);
     expect(info.expiresAt).toBe(1_900_000_000);
     expect(info.extra).toMatchObject({ userName: 'ALICE', email: 'alice@example.com' });
+    expect(Object.keys(info.extra ?? {}).sort()).toEqual(['email', 'userName']);
+  });
+
+  it('extracts requested attributes and status after SAP validation only', async () => {
+    securityContextState.logonName = 'ALICE';
+    securityContextState.attributes = { arc1_targets: ['A4H/001'], unrelated: ['not exposed'] };
+    const info = await createXsuaaTokenVerifier(CREDS, {
+      userAttributeNames: ['arc1_targets', 'absent'],
+      requireUserToken: true,
+    })('jwt');
+    expect(info.extra?.xsuaaUserAttributes).toEqual({ arc1_targets: ['A4H/001'] });
+    expect(info.extra?.xsuaaUserAttributeStatus).toEqual({ arc1_targets: 'valid', absent: 'missing' });
+    expect(Object.isFrozen(info.extra?.xsuaaUserAttributes)).toBe(true);
+  });
+
+  it('does not extract machine attributes and emits typed rejection when required', async () => {
+    securityContextState.grantType = 'client_credentials';
+    securityContextState.scopes = new Set(['admin']);
+    securityContextState.attributes = { arc1_targets: ['*'] };
+    const info = await createXsuaaTokenVerifier(CREDS, { userAttributeNames: ['arc1_targets'] })('jwt');
+    expect(info.extra?.xsuaaUserAttributes).toEqual({});
+    expect(info.extra?.xsuaaUserAttributeStatus).toEqual({ arc1_targets: 'missing' });
+    await expect(createXsuaaTokenVerifier(CREDS, { requireUserToken: true })('jwt')).rejects.toBeInstanceOf(
+      XsuaaUserTokenRequiredError,
+    );
+  });
+
+  it('keeps ordinary validation failures as InvalidTokenError even when user tokens are required', async () => {
+    createSecurityContextMock.mockRejectedValueOnce(new Error('wrong signature'));
+    await expect(createXsuaaTokenVerifier(CREDS, { requireUserToken: true })('bad')).rejects.toBeInstanceOf(
+      InvalidTokenError,
+    );
+  });
+
+  it('captures options at construction and rejects a non-boolean requireUserToken', async () => {
+    securityContextState.logonName = 'ALICE';
+    securityContextState.attributes = { first: 'one', second: 'two' };
+    const names = ['first'];
+    const options = { userAttributeNames: names, requireUserToken: true };
+    const verify = createXsuaaTokenVerifier(CREDS, options);
+    names.push('second');
+    options.requireUserToken = false;
+    expect((await verify('jwt')).extra?.xsuaaUserAttributes).toEqual({ first: ['one'] });
+    securityContextState.grantType = 'client_credentials';
+    await expect(verify('machine')).rejects.toBeInstanceOf(XsuaaUserTokenRequiredError);
+    expect(() => createXsuaaTokenVerifier(CREDS, { requireUserToken: 'false' as unknown as boolean })).toThrow(
+      TypeError,
+    );
+  });
+
+  it('does not log requested user attribute names or values', async () => {
+    const logger = makeCapturingLogger();
+    securityContextState.logonName = 'ALICE';
+    securityContextState.attributes = { private_target: ['PRIVATE/100'] };
+    await createXsuaaTokenVerifier(CREDS, { logger, userAttributeNames: ['private_target'] })('jwt');
+    const logged = JSON.stringify(logger);
+    expect(logged).not.toContain('private_target');
+    expect(logged).not.toContain('PRIVATE/100');
   });
 
   it('only collects the 7 known MCP scopes (ignores unrelated local scopes)', async () => {

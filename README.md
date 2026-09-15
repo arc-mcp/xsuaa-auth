@@ -126,6 +126,34 @@ Each verifier also accepts **`acceptedScopes`** (default the arc-1 set `['read',
 
 `createOidcVerifier` additionally accepts **`fallbackScopes`** (default `[]`, **fail closed**) — the scopes granted when a *verified* OIDC token carries no accepted scope (no `scope`/`scp` claim, or claims that match none of `acceptedScopes`). The empty default means an IdP misconfigured to drop scope claims grants **no** access rather than silently falling back to read-only. Opt into the legacy read-only behavior with `fallbackScopes: ['read']` (via the facade, `oidc.fallbackScopes`). It is not run through `expandScopes`.
 
+### Verified user attributes (optional building block)
+
+`createXsuaaTokenVerifier` accepts `userAttributeNames` and `requireUserToken` for applications
+that authorize individual user principals with XSUAA attributes. Omitting both options preserves
+the existing verifier behavior and `AuthInfo` shape. This is not enabled by `setupHttpAuth`.
+
+```ts
+const verify = createXsuaaTokenVerifier(credentials, {
+  userAttributeNames: ['arc1_targets'],
+  requireUserToken: true,
+});
+const authInfo = await verify(accessToken);
+// authInfo.extra.xsuaaUserAttributes: { arc1_targets: ['A4H/001', 'A4H/100'] }
+// authInfo.extra.xsuaaUserAttributeStatus: { arc1_targets: 'valid' }
+```
+
+Only allowlisted attributes from the successfully validated SAP security context are copied.
+The arrays and records are frozen; missing, malformed, and over-limit values carry distinct safe
+status codes. Target syntax and application policy stay in the consumer. Do not request an OAuth
+scope named `user_attributes` to activate this feature.
+
+`requireUserToken` rejects machine or unknown principals with the exported
+`XsuaaUserTokenRequiredError`. Your HTTP adapter must catch that type and return a generic **403**;
+ordinary `InvalidTokenError` remains **401**. Do not pass the typed principal failure directly to
+the MCP SDK bearer middleware (it converts unknown errors to 500), parse error messages, or retry
+another authentication method. The package's chained verifier preserves this terminal error.
+See [the attribute/principal contract and live-evidence gates](docs/USER-ATTRIBUTES.md).
+
 ---
 
 ## `AuthOptions`

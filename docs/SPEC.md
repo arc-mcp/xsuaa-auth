@@ -171,8 +171,20 @@ export class XsuaaProxyOAuthProvider { /* extends the SDK ProxyOAuthServerProvid
 // 'Viewer') overrides it so its scopes aren't silently dropped. `expandScopes` is
 // applied EXACTLY once by each sub-verifier (the chain does NOT re-apply it).
 export function createXsuaaTokenVerifier(
-  credentials: XsuaaCredentials, options?: { expandScopes?: ExpandScopes; acceptedScopes?: string[]; logger?: Logger },
+  credentials: XsuaaCredentials, options?: XsuaaTokenVerifierOptions,
 ): Verifier;
+export interface XsuaaTokenVerifierOptions {
+  expandScopes?: ExpandScopes; acceptedScopes?: string[]; logger?: Logger;
+  userAttributeNames?: readonly string[]; requireUserToken?: boolean;
+}
+export type XsuaaUserAttributeStatus = 'valid' | 'missing' | 'invalid' | 'limit_exceeded';
+export type XsuaaUserAttributes = Readonly<Record<string, readonly string[]>>;
+export type XsuaaUserAttributeStatuses = Readonly<Record<string, XsuaaUserAttributeStatus>>;
+export interface XsuaaUserAttributeInfo {
+  readonly xsuaaUserAttributes: XsuaaUserAttributes;
+  readonly xsuaaUserAttributeStatus: XsuaaUserAttributeStatuses;
+}
+export class XsuaaUserTokenRequiredError extends Error { readonly code: 'XSUAA_USER_TOKEN_REQUIRED'; }
 export function createOidcVerifier(   // lazy-imports jose
   issuer: string, audience: string,
   options?: { clockToleranceSec?: number; scopeClaim?: string; algorithms?: string[]; acceptedScopes?: string[]; fallbackScopes?: string[]; expandScopes?: ExpandScopes; logger?: Logger },

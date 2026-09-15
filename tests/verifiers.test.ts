@@ -20,6 +20,7 @@ import { type CryptoKey, exportJWK, generateKeyPair, type JWK, SignJWT } from 'j
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type AuthInfo, createApiKeyVerifier, createChainedTokenVerifier, createOidcVerifier } from '../src/index.js';
 import { InvalidTokenError } from '../src/internal/sdk.js';
+import { XsuaaUserTokenRequiredError } from '../src/xsuaa-user-principal.js';
 import { makeCapturingLogger } from './helpers/test-logger.js';
 
 afterEach(() => {
@@ -363,6 +364,19 @@ describe('createChainedTokenVerifier', () => {
     expect(result.clientId).toBe('oidc-client');
     expect(xsuaaVerifier).toHaveBeenCalled();
     expect(oidcVerifier).toHaveBeenCalled();
+  });
+
+  it('never falls through after a validated XSUAA principal was forbidden', async () => {
+    const rejection = new XsuaaUserTokenRequiredError();
+    const xsuaaVerifier = vi.fn().mockRejectedValue(rejection);
+    const oidcVerifier = vi.fn().mockResolvedValue({ token: 'token', clientId: 'other', scopes: ['admin'] });
+    const verifier = createChainedTokenVerifier(
+      { apiKeys: [{ key: 'token', scopes: ['admin'] }] },
+      xsuaaVerifier,
+      oidcVerifier,
+    );
+    await expect(verifier('token')).rejects.toBe(rejection);
+    expect(oidcVerifier).not.toHaveBeenCalled();
   });
 
   it('falls through to API key when both XSUAA and OIDC fail', async () => {

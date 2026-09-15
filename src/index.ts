@@ -42,6 +42,13 @@ export {
   createOidcVerifier,
   DEFAULT_ACCEPTED_SCOPES,
 } from './verifiers.js';
-// ─── XSUAA binding + token verifier + scope helpers ──────────────────
-export type { XsuaaCredentials } from './xsuaa.js';
+export type { XsuaaCredentials, XsuaaTokenVerifierOptions } from './xsuaa.js';
 export { createXsuaaTokenVerifier, qualifyXsuaaScopes, RESERVED_OAUTH_SCOPES } from './xsuaa.js';
+// ─── XSUAA binding + token verifier + scope helpers ──────────────────
+export type {
+  XsuaaUserAttributeInfo,
+  XsuaaUserAttributeStatus,
+  XsuaaUserAttributeStatuses,
+  XsuaaUserAttributes,
+} from './xsuaa-user-attributes.js';
+export { XsuaaUserTokenRequiredError } from './xsuaa-user-principal.js';

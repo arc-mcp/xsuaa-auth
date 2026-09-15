@@ -18,6 +18,7 @@ import { InvalidTokenError } from './internal/sdk.js';
 import type { Logger } from './logger.js';
 import { noopLogger } from './logger.js';
 import type { ApiKeyEntry, ExpandScopes, Verifier } from './types.js';
+import { XsuaaUserTokenRequiredError } from './xsuaa-user-principal.js';
 
 const IDENTITY: ExpandScopes = (s) => s;
 
@@ -339,6 +340,9 @@ export function createChainedTokenVerifier(
         });
         return result;
       } catch (err) {
+        // This token was authenticated by XSUAA but its principal was forbidden.
+        // A second verifier must not turn that authorization failure into access.
+        if (err instanceof XsuaaUserTokenRequiredError) throw err;
         logger.debug('Chained token verifier: XSUAA failed, trying next', {
           error: err instanceof Error ? err.message : String(err),
         });
