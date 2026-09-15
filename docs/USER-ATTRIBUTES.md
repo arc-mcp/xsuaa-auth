@@ -64,16 +64,37 @@ unknown-principal rejection, terminal chain behavior, and real SAP SDK RSA signa
 audience validation with only the remote JWKS fetch stubbed. Synthetic grant fixtures are
 **not live evidence** of XSUAA's emitted shape or role/IAS union behavior.
 
-Before release, preserve sanitized verified-context shape evidence from actual authorization-code,
-refreshed user and JWT-bearer exchanges. Test machine tokens, two isolated application identities,
-same-named attributes, wrong audiences, and IAS/static unions. If a supported flow's claim shape
-differs, adjust the narrow classifier and replay it; do not relax it to email/sub presence. Never
-commit JWTs, credentials, user identifiers, or full claims as fixtures.
+Live tests on 2026-09-15 used the candidate with an isolated ARC-1 CF application and XSUAA service:
+
+- Actual IAS-backed authorization-code logins and user JWT-bearer exchanges passed SAP SDK
+  verification and user classification. Verified contexts had nonblank origin/logon values and
+  SAP's `user/<origin>/<logonName>` principal. Static attributes arrived as string arrays.
+- A refreshed user token retained `grant_type=authorization_code` and passed classification.
+  Refresh after a role addition retained old attributes; a reused browser login after Admin removal
+  also retained old capabilities. These observations are **not** proof of immediate revocation or
+  completed fresh-session recovery. Token exchange and interactive login are distinct test flows.
+- Real client-credentials tokens with zero ARC scopes and with explicit `read`/`admin` authorities
+  failed the user-only contract and received 403 from ARC's enforced HTTP routes.
+- A real second application's machine token verified against its own service but failed with
+  SAP SDK `wrong_audience` against the first. ARC returned 401. This does not yet prove the
+  same-named-attribute boundary for two human application tokens or another identity origin.
+- Exact values from multiple static roles were unioned. Real tokens with 50, 100 and 256 values
+  retained every value and passed the CF edge; measured sizes were 3,473, 4,406 and 7,318 bytes
+  for those fixtures. ARC's narrower target-grammar/size limits independently denied malformed
+  or over-limit grants; the generic library correctly retained valid bounded string arrays.
+
+Before release, finish two-human/cross-origin and same-named-attribute application isolation,
+fresh-session recovery and dedicated IAS/static union tests as applicable to the promised recipe.
+If a supported flow's claim shape differs, adjust the narrow classifier and replay it; do not
+relax it to email/sub presence. Never commit JWTs, credentials, user identifiers or full claims.
+Detailed test boundaries and remaining gates are maintained in
+[ARC-1 PR #677's validation record](https://github.com/arc-mcp/arc-1/blob/codex/xsuaa-target-authorization-spec/docs/research/2026-09-15-pr677-target-authorization-implementation.md).
 
 The `@sap/xssec` 4.15 source validates XSUAA expiry/nbf, audience and signature; its binding-controlled
 JWKS endpoint uses the token's zone and service credentials. It does not implement a simple
 `iss === binding.url` string comparison. Tests must not claim a mocked local issuer mismatch
-proves tenant isolation. Real wrong-tenant/application tests remain necessary.
+proves tenant isolation. The live wrong-application machine test above does not replace real
+wrong-tenant/human-application tests.
 
 ## Source evidence
 
