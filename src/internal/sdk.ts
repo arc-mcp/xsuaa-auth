@@ -9,7 +9,7 @@
  */
 
 export type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/server/auth/clients.js';
-export { InvalidTokenError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
+export { InsufficientScopeError, InvalidTokenError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 export { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
 export { ProxyOAuthServerProvider } from '@modelcontextprotocol/sdk/server/auth/providers/proxyProvider.js';
 export { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';

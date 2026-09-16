@@ -148,10 +148,17 @@ status codes. Target syntax and application policy stay in the consumer. Do not 
 scope named `user_attributes` to activate this feature.
 
 `requireUserToken` rejects machine or unknown principals with the exported
-`XsuaaUserTokenRequiredError`. Your HTTP adapter must catch that type and return a generic **403**;
-ordinary `InvalidTokenError` remains **401**. Do not pass the typed principal failure directly to
-the MCP SDK bearer middleware (it converts unknown errors to 500), parse error messages, or retry
-another authentication method. The package's chained verifier preserves this terminal error.
+`XsuaaUserTokenRequiredError`. It extends the MCP SDK's `InsufficientScopeError`, so
+`requireBearerAuth` returns **403** (`insufficient_scope`); ordinary `InvalidTokenError` remains
+**401**. A custom adapter can instead map its stable `XSUAA_USER_TOKEN_REQUIRED` code to a generic
+403. A machine principal cannot satisfy this policy by requesting more scopes. Do not parse error
+messages or retry another authentication method after this terminal error; the package's chain
+preserves it, including errors from separately loaded package copies.
+
+The chain still tries other verifiers after an ordinary validation/JWKS failure. Do not configure
+an alternative verifier that accepts the same XSUAA tokens with a weaker principal policy. For a
+user-only XSUAA route, use the configured XSUAA verifier directly. Attribute extraction alone is
+not proof of a user principal or application permission; enforce the required local scopes too.
 See [the attribute/principal contract and live-evidence gates](docs/USER-ATTRIBUTES.md).
 
 ---

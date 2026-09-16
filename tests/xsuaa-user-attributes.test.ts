@@ -2,8 +2,12 @@ import { describe, expect, it, vi } from 'vitest';
 import { extractXsuaaUserAttributes, validateUserAttributeNames } from '../src/xsuaa-user-attributes.js';
 import { hasSupportedXsuaaUserPrincipal } from '../src/xsuaa-user-principal.js';
 
+const contextFor = (attributes: Record<string, unknown>) => ({
+  token: { payload: { 'xs.user.attributes': attributes } },
+});
+
 function extract(raw: unknown, names = ['target']) {
-  return extractXsuaaUserAttributes({ getAttribute: () => raw }, names, true);
+  return extractXsuaaUserAttributes(contextFor(Object.fromEntries(names.map((name) => [name, raw]))), names, true);
 }
 
 describe('verified XSUAA user attribute extraction', () => {
@@ -24,15 +28,15 @@ describe('verified XSUAA user attribute extraction', () => {
     expect(info.xsuaaUserAttributeStatus.target).toBe('valid');
   });
 
-  it.each([undefined, null])('omits missing values %j', (raw) => {
+  it.each([undefined, null, 0, false, ''])('preserves missing/falsy SDK compatibility for %j', (raw) => {
     const info = extract(raw);
     expect(info.xsuaaUserAttributeStatus.target).toBe('missing');
     expect(info.xsuaaUserAttributes).not.toHaveProperty('target');
   });
 
-  it.each([0, false, {}, ['one', 0], ['one', {}], '', ' ', ['one', '\t']])(
-    'rejects invalid values %j without partly accepted arrays',
-    (raw) => {
+  it.each([{}, ['one', 0], ['one', {}], ' ', ['one', '\t']].map((raw) => ({ raw })))(
+    'rejects invalid values $raw without partly accepted arrays',
+    ({ raw }) => {
       const info = extract(raw);
       expect(info.xsuaaUserAttributeStatus.target).toBe('invalid');
       expect(info.xsuaaUserAttributes).not.toHaveProperty('target');
@@ -40,17 +44,32 @@ describe('verified XSUAA user attribute extraction', () => {
   );
 
   it('does not read attributes on a machine or unknown principal', () => {
-    const getAttribute = vi.fn(() => ['*']);
-    const info = extractXsuaaUserAttributes({ getAttribute }, ['target', 'other'], false);
-    expect(getAttribute).not.toHaveBeenCalled();
+    const getPayload = vi.fn(() => ({ 'xs.user.attributes': { target: ['*'] } }));
+    const info = extractXsuaaUserAttributes(
+      {
+        token: {
+          get payload() {
+            return getPayload();
+          },
+        },
+      },
+      ['target', 'other'],
+      false,
+    );
+    expect(getPayload).not.toHaveBeenCalled();
     expect(info.xsuaaUserAttributes).toEqual({});
     expect(info.xsuaaUserAttributeStatus).toEqual({ target: 'missing', other: 'missing' });
   });
 
   it('reads only allowlisted names', () => {
-    const getAttribute = vi.fn(() => 'one');
-    extractXsuaaUserAttributes({ getAttribute }, ['target'], true);
-    expect(getAttribute.mock.calls).toEqual([['target']]);
+    const unrelated = vi.fn(() => {
+      throw new Error('unrequested attribute read');
+    });
+    const attributes = Object.defineProperty({ target: 'one' }, 'unrelated', { get: unrelated });
+    expect(extractXsuaaUserAttributes(contextFor(attributes), ['target'], true).xsuaaUserAttributes.target).toEqual([
+      'one',
+    ]);
+    expect(unrelated).not.toHaveBeenCalled();
   });
 
   it('copies and freezes the result, records and arrays', () => {
@@ -81,12 +100,13 @@ describe('verified XSUAA user attribute extraction', () => {
 
   it('enforces UTF-8 byte lengths, not JS character counts', () => {
     expect(extract('é'.repeat(512)).xsuaaUserAttributeStatus.target).toBe('valid');
+    expect(extract(`${'é'.repeat(512)}x`).xsuaaUserAttributeStatus.target).toBe('limit_exceeded');
     expect(extract('é'.repeat(513)).xsuaaUserAttributeStatus.target).toBe('limit_exceeded');
   });
 
   it('retains unrelated valid names after a per-name limit failure', () => {
     const info = extractXsuaaUserAttributes(
-      { getAttribute: (name) => (name === 'bad' ? ['x'.repeat(1_025)] : ['one']) },
+      contextFor({ bad: ['x'.repeat(1_025)], good: ['one'] }),
       ['bad', 'good'],
       true,
     );
@@ -96,20 +116,56 @@ describe('verified XSUAA user attribute extraction', () => {
 
   it('accepts exactly 64 KiB combined before copying', () => {
     const info = extractXsuaaUserAttributes(
-      { getAttribute: () => Array(32).fill('x'.repeat(1_024)) },
+      contextFor({ one: Array(32).fill('x'.repeat(1_024)), two: Array(32).fill('x'.repeat(1_024)) }),
       ['one', 'two'],
       true,
     );
     expect(info.xsuaaUserAttributeStatus).toEqual({ one: 'valid', two: 'valid' });
+    expect(info.xsuaaUserAttributes).toEqual({
+      one: Array(32).fill('x'.repeat(1_024)),
+      two: Array(32).fill('x'.repeat(1_024)),
+    });
+    expect(Object.isFrozen(info.xsuaaUserAttributes.one)).toBe(true);
+    expect(Object.isFrozen(info.xsuaaUserAttributes.two)).toBe(true);
+  });
+
+  it.each([65_535, 65_536, 65_537])('pins the combined byte boundary at %i bytes', (bytes) => {
+    const raw = [
+      ...Array(Math.floor(bytes / 1_024)).fill('x'.repeat(1_024)),
+      ...(bytes % 1_024 ? ['x'.repeat(bytes % 1_024)] : []),
+    ];
+    const info = extract(raw);
+    expect(info.xsuaaUserAttributeStatus.target).toBe(bytes <= 65_536 ? 'valid' : 'limit_exceeded');
+    expect(info.xsuaaUserAttributes).toEqual(bytes <= 65_536 ? { target: raw } : {});
+  });
+
+  it.each(['x'.repeat(65_537), [...Array(64).fill('x'.repeat(1_024)), false]].map((bad) => ({ bad })))(
+    'does not charge rejected candidates to unrelated valid attributes',
+    ({ bad }) => {
+      for (const names of [
+        ['bad', 'good'],
+        ['good', 'bad'],
+      ]) {
+        const info = extractXsuaaUserAttributes(contextFor({ bad, good: ['one'] }), names, true);
+        expect(info.xsuaaUserAttributes).toEqual({ good: ['one'] });
+        expect(info.xsuaaUserAttributeStatus.good).toBe('valid');
+      }
+    },
+  );
+
+  it.each([1_023, 1_024, 1_025])('pins ASCII value-byte and raw-entry limits at %i', (size) => {
+    const expected = size <= 1_024 ? 'valid' : 'limit_exceeded';
+    expect(extract('x'.repeat(size)).xsuaaUserAttributeStatus.target).toBe(expected);
+    expect(extract(Array(size).fill('x')).xsuaaUserAttributeStatus.target).toBe(expected);
   });
 
   it('rejects every requested name on aggregate overflow, independent of allowlist order', () => {
-    const getAttribute = (name: string) => (name === 'missing' ? null : Array(33).fill('x'.repeat(1_024)));
+    const context = contextFor({ one: Array(33).fill('x'.repeat(1_024)), two: Array(33).fill('x'.repeat(1_024)) });
     for (const names of [
       ['one', 'two', 'missing'],
       ['missing', 'two', 'one'],
     ]) {
-      const info = extractXsuaaUserAttributes({ getAttribute }, names, true);
+      const info = extractXsuaaUserAttributes(context, names, true);
       expect(info.xsuaaUserAttributes).toEqual({});
       expect(info.xsuaaUserAttributeStatus).toEqual({
         one: 'limit_exceeded',
@@ -146,6 +202,7 @@ describe('attribute-name allowlist validation', () => {
   });
 
   it('caps distinct names and checks runtime option types', () => {
+    expect(validateUserAttributeNames(['a'.repeat(64)])).toEqual(['a'.repeat(64)]);
     expect(validateUserAttributeNames(Array.from({ length: 16 }, (_, i) => `a${i}`))).toHaveLength(16);
     expect(() => validateUserAttributeNames(Array.from({ length: 17 }, (_, i) => `a${i}`))).toThrow(TypeError);
     expect(() => validateUserAttributeNames('target' as unknown as string[])).toThrow(TypeError);
@@ -154,16 +211,11 @@ describe('attribute-name allowlist validation', () => {
 });
 
 describe('verified user-principal classification', () => {
-  const context = (
-    grant: unknown,
-    origin: unknown = 'ias',
-    logon: unknown = 'alice',
-    principal: unknown = `user/${origin}/${logon}`,
-  ) => ({
+  const context = (grant: unknown, origin: unknown = 'ias', logon: unknown = 'alice') => ({
+    token: { payload: { grant_type: grant, origin, user_name: logon } },
     getGrantType: () => grant,
     getOrigin: () => origin,
     getLogonName: () => logon,
-    getUserName: () => principal,
   });
 
   it.each(['authorization_code', 'refresh_token', 'urn:ietf:params:oauth:grant-type:jwt-bearer'])(
@@ -181,13 +233,14 @@ describe('verified user-principal classification', () => {
   );
 
   it.each([
-    [null, 'alice', 'user/ias/alice'],
-    ['ias', '', 'user/ias/'],
-    ['bad/origin', 'alice', 'user/bad/origin/alice'],
-    ['ias', 'alice', 'client/sb-machine'],
-    [42, 'alice', 'user/42/alice'],
-    ['ias', [], 'user/ias/'],
-  ])('rejects malformed or inconsistent SAP user evidence', (origin, logon, principal) => {
-    expect(hasSupportedXsuaaUserPrincipal(context('authorization_code', origin, logon, principal))).toBe(false);
+    [null, 'alice'],
+    ['ias', ''],
+    ['bad/origin', 'alice'],
+    [42, 'alice'],
+    ['ias', []],
+    [' ', 'alice'],
+    ['ias', '\t'],
+  ])('rejects malformed SAP user fields', (origin, logon) => {
+    expect(hasSupportedXsuaaUserPrincipal(context('authorization_code', origin, logon))).toBe(false);
   });
 });

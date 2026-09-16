@@ -1,5 +1,7 @@
+import { InsufficientScopeError } from './internal/sdk.js';
+
 /** A validated token does not carry a supported XSUAA user principal. */
-export class XsuaaUserTokenRequiredError extends Error {
+export class XsuaaUserTokenRequiredError extends InsufficientScopeError {
   readonly code = 'XSUAA_USER_TOKEN_REQUIRED';
 
   constructor() {
@@ -11,10 +13,10 @@ export class XsuaaUserTokenRequiredError extends Error {
 const USER_GRANTS = new Set(['authorization_code', 'refresh_token', 'urn:ietf:params:oauth:grant-type:jwt-bearer']);
 
 interface VerifiedXsuaaContext {
+  token: { payload: unknown };
   getGrantType(): unknown;
   getOrigin(): unknown;
   getLogonName(): unknown;
-  getUserName(): unknown;
 }
 
 /**
@@ -26,11 +28,18 @@ interface VerifiedXsuaaContext {
  * particular a refreshed token can retain its original authorization-code grant.
  */
 export function hasSupportedXsuaaUserPrincipal(context: VerifiedXsuaaContext): boolean {
+  const payload = context.token.payload;
+  // The SDK accessors below use normal property lookup. A signed token must
+  // contain the user evidence itself, not inherit it from a polluted prototype.
+  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return false;
+  if (!['grant_type', 'origin', 'user_name'].every((name) => Object.hasOwn(payload, name))) return false;
   const grant = context.getGrantType();
   if (typeof grant !== 'string' || !USER_GRANTS.has(grant)) return false;
   const origin = context.getOrigin();
   const logonName = context.getLogonName();
   if (typeof origin !== 'string' || !origin.trim() || origin.includes('/')) return false;
   if (typeof logonName !== 'string' || !logonName.trim()) return false;
-  return context.getUserName() === `user/${origin}/${logonName}`;
+  // SAP getUserName() formats these same fields; comparing that string would not
+  // add independent user evidence. Keep the grant, type and nonblank guards.
+  return true;
 }

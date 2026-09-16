@@ -39,7 +39,15 @@ const createSecurityContextMock = vi.fn(async () => ({
       ? `client/${securityContextState.clientId}`
       : `user/${securityContextState.origin}/${securityContextState.logonName}`,
   getAttribute: (name: string) => securityContextState.attributes?.[name] || null,
-  token: { payload: { exp: securityContextState.exp } },
+  token: {
+    payload: {
+      exp: securityContextState.exp,
+      grant_type: securityContextState.grantType,
+      origin: securityContextState.origin,
+      user_name: securityContextState.logonName,
+      'xs.user.attributes': securityContextState.attributes,
+    },
+  },
 }));
 
 const xsuaaServiceCtor = vi.fn();

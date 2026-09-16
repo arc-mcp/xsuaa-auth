@@ -1,8 +1,19 @@
 /** Bounded extraction from an already validated SAP XSUAA security context. */
 
 export type XsuaaUserAttributeStatus = 'valid' | 'missing' | 'invalid' | 'limit_exceeded';
-export type XsuaaUserAttributes = Readonly<Record<string, readonly string[]>>;
-export type XsuaaUserAttributeStatuses = Readonly<Record<string, XsuaaUserAttributeStatus>>;
+/** Sparse dictionaries have no Object.prototype methods. Use Object.hasOwn(). */
+type NullPrototypeRecord<Value> = {
+  [name: string]: Value | undefined;
+  hasOwnProperty?: never;
+  isPrototypeOf?: never;
+  propertyIsEnumerable?: never;
+  toLocaleString?: never;
+  toString?: never;
+  valueOf?: never;
+  constructor?: never;
+};
+export type XsuaaUserAttributes = Readonly<NullPrototypeRecord<readonly string[]>>;
+export type XsuaaUserAttributeStatuses = Readonly<NullPrototypeRecord<XsuaaUserAttributeStatus>>;
 
 export interface XsuaaUserAttributeInfo {
   readonly xsuaaUserAttributes: XsuaaUserAttributes;
@@ -30,24 +41,47 @@ export function validateUserAttributeNames(names: readonly string[] | undefined)
   return Object.freeze([...unique]);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** Read only own fields of the SDK-verified payload, never decode an unverified JWT. */
+function verifiedAttributeContainer(payload: unknown): Record<string, unknown> | 'missing' | 'invalid' {
+  if (!isRecord(payload)) return 'invalid';
+  let raw: unknown;
+  if (Object.hasOwn(payload, 'ext_cxt') && payload.ext_cxt != null) {
+    if (!isRecord(payload.ext_cxt)) return 'invalid';
+    if (Object.hasOwn(payload.ext_cxt, 'xs.user.attributes')) raw = payload.ext_cxt['xs.user.attributes'];
+  }
+  // Preserve the SDK's nullish ext_cxt precedence, without prototype lookup.
+  if (raw == null && Object.hasOwn(payload, 'xs.user.attributes')) raw = payload['xs.user.attributes'];
+  if (raw == null) return 'missing';
+  return isRecord(raw) ? raw : 'invalid';
+}
+
 /**
  * Only call on a context returned by XsuaaService.createSecurityContext().
  * Oversized arrays are not traversed or copied. The aggregate byte budget applies
  * to bounded candidate values; a per-name rejected array is not extracted.
  */
 export function extractXsuaaUserAttributes(
-  context: { getAttribute(name: string): unknown },
+  context: { token: { payload: unknown } },
   names: readonly string[],
   isUserPrincipal: boolean,
 ): XsuaaUserAttributeInfo {
-  const attributes: Record<string, readonly string[]> = Object.create(null);
-  const statuses: Record<string, XsuaaUserAttributeStatus> = Object.create(null);
+  const attributes: NullPrototypeRecord<readonly string[]> = Object.create(null);
+  const statuses: NullPrototypeRecord<XsuaaUserAttributeStatus> = Object.create(null);
   const candidates = new Map<string, readonly string[]>();
+  const container = isUserPrincipal ? verifiedAttributeContainer(context.token.payload) : 'missing';
   let totalBytes = 0;
   for (const name of names) {
     statuses[name] = 'missing';
-    if (!isUserPrincipal) continue;
-    const raw = context.getAttribute(name);
+    if (typeof container === 'string') {
+      statuses[name] = container;
+      continue;
+    }
+    // Keep SAP getAttribute()'s falsy-to-null compatibility, but only for own fields.
+    const raw = Object.hasOwn(container, name) ? container[name] || null : undefined;
     if (raw == null) continue;
     const values: readonly unknown[] = typeof raw === 'string' ? [raw] : Array.isArray(raw) ? raw : [];
     if (typeof raw !== 'string' && !Array.isArray(raw)) {
@@ -60,18 +94,22 @@ export function extractXsuaaUserAttributes(
     }
     let invalid = false;
     let tooLarge = false;
+    let candidateBytes = 0;
     for (const value of values) {
       if (typeof value !== 'string') {
         invalid = true;
         continue;
       }
       const bytes = Buffer.byteLength(value, 'utf8');
-      totalBytes += bytes;
+      candidateBytes += bytes;
       if (bytes > MAX_VALUE_BYTES) tooLarge = true;
       if (value.trim().length === 0) invalid = true;
     }
     statuses[name] = tooLarge ? 'limit_exceeded' : invalid ? 'invalid' : 'valid';
-    if (statuses[name] === 'valid') candidates.set(name, values as readonly string[]);
+    if (statuses[name] === 'valid') {
+      totalBytes += candidateBytes;
+      candidates.set(name, values as readonly string[]);
+    }
   }
 
   if (totalBytes > MAX_TOTAL_BYTES) {

@@ -46,7 +46,7 @@ export interface XsuaaTokenVerifierOptions {
   logger?: Logger;
   /** Allowlisted verified user attributes; omitted preserves the existing AuthInfo shape. */
   userAttributeNames?: readonly string[];
-  /** Reject machine/unknown principals with XsuaaUserTokenRequiredError (HTTP adapter must map to 403). */
+  /** Reject machine/unknown principals; the SDK bearer middleware maps the typed error to 403. */
   requireUserToken?: boolean;
 }
 
@@ -102,7 +102,10 @@ export function createXsuaaTokenVerifier(
 
     const userPrincipal =
       requireUserToken || userAttributeNames !== undefined ? hasSupportedXsuaaUserPrincipal(securityContext) : false;
-    if (requireUserToken && !userPrincipal) throw new XsuaaUserTokenRequiredError();
+    if (requireUserToken && !userPrincipal) {
+      logger.debug('XSUAA principal rejected', { code: 'XSUAA_USER_TOKEN_REQUIRED' });
+      throw new XsuaaUserTokenRequiredError();
+    }
     const userAttributes =
       userAttributeNames === undefined
         ? undefined

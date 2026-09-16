@@ -296,7 +296,9 @@ export function createOidcVerifier(
  * Chain bearer verifiers in the SPEC-frozen order **XSUAA → OIDC → api-key**.
  *
  * Each provided verifier is tried in turn; the first that resolves wins. If none
- * accept, throws {@link InvalidTokenError}.
+ * authenticate, throws {@link InvalidTokenError}. An authenticated XSUAA
+ * principal rejected by requireUserToken throws {@link XsuaaUserTokenRequiredError}
+ * immediately; it must not fall through to another method.
  *
  * **`expandScopes` is applied exactly once — by the sub-verifiers, NOT here.** The
  * XSUAA/OIDC/api-key verifiers each expand the scopes they extract; the chain
@@ -304,8 +306,9 @@ export function createOidcVerifier(
  * non-idempotent expander.) The chain only builds the api-key verifier with the
  * injected hook so the api-key path expands once too.
  *
- * The order is correctness-immaterial (token types are disjoint) but pinned for
- * determinism + test stability.
+ * Alternatives must not overlap XSUAA trust with a weaker principal policy.
+ * An XSUAA validation/JWKS failure still tries the other independently trusted
+ * methods; the chain cannot classify unverified claims as a forbidden principal.
  */
 export function createChainedTokenVerifier(
   config: { apiKeys?: string | ApiKeyEntry[] },
@@ -343,6 +346,11 @@ export function createChainedTokenVerifier(
         // This token was authenticated by XSUAA but its principal was forbidden.
         // A second verifier must not turn that authorization failure into access.
         if (err instanceof XsuaaUserTokenRequiredError) throw err;
+        if (typeof err === 'object' && err !== null && 'code' in err && err.code === 'XSUAA_USER_TOKEN_REQUIRED') {
+          // A separately loaded package copy has a different class identity.
+          // Normalize its stable code to our SDK-compatible, fixed-message error.
+          throw new XsuaaUserTokenRequiredError();
+        }
         logger.debug('Chained token verifier: XSUAA failed, trying next', {
           error: err instanceof Error ? err.message : String(err),
         });

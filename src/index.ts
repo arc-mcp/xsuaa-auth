@@ -44,7 +44,7 @@ export {
 } from './verifiers.js';
 export type { XsuaaCredentials, XsuaaTokenVerifierOptions } from './xsuaa.js';
 export { createXsuaaTokenVerifier, qualifyXsuaaScopes, RESERVED_OAUTH_SCOPES } from './xsuaa.js';
-// ─── XSUAA binding + token verifier + scope helpers ──────────────────
+// ─── Verified XSUAA user attributes + principal rejection ───────────
 export type {
   XsuaaUserAttributeInfo,
   XsuaaUserAttributeStatus,

@@ -392,6 +392,22 @@ describe('createChainedTokenVerifier', () => {
     expect(result.clientId).toBe('api-key:admin');
   });
 
+  it('normalizes the stable principal-rejection code from another package copy', async () => {
+    const rejection = Object.assign(new Error('do not expose a foreign error message'), {
+      code: 'XSUAA_USER_TOKEN_REQUIRED',
+      name: 'XsuaaUserTokenRequiredError',
+    });
+    const oidc = vi.fn().mockResolvedValue({ token: 'token', clientId: 'other', scopes: ['admin'] });
+    const check = createChainedTokenVerifier(
+      { apiKeys: [{ key: 'token', scopes: ['admin'] }] },
+      vi.fn().mockRejectedValue(rejection),
+      oidc,
+    );
+    await expect(check('token')).rejects.toBeInstanceOf(XsuaaUserTokenRequiredError);
+    await expect(check('token')).rejects.toThrow('A supported user principal is required');
+    expect(oidc).not.toHaveBeenCalled();
+  });
+
   it('throws InvalidTokenError when all verifiers fail and no API key', async () => {
     const xsuaaVerifier = vi.fn().mockRejectedValue(new Error('XSUAA fail'));
     const oidcVerifier = vi.fn().mockRejectedValue(new Error('OIDC fail'));
