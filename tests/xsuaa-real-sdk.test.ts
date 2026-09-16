@@ -1,4 +1,6 @@
 /** Real SAP signature/expiry/audience validation; only remote JWKS retrieval is stubbed. */
+
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import xssec from '@sap/xssec';
 import express from 'express';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
@@ -118,29 +120,33 @@ describe('new verifier options with real @sap/xssec 4.x validation', () => {
     );
   });
 
-  it.each(['wrong signature', 'expired', 'wrong audience'])(
-    'validates an unsupported machine before classification: %s',
-    async (failure) => {
-      const jwt = await token(
-        { grant_type: 'client_credentials', ...(failure === 'expired' ? { exp: 1 } : {}) },
-        failure === 'wrong signature' ? unrelatedKey : key,
-      );
-      const check = createXsuaaTokenVerifier(
-        failure === 'wrong audience' ? { ...CREDS, clientid: 'other!t456', xsappname: 'other!t456' } : CREDS,
-        { requireUserToken: true, userAttributeNames: ['arc1_targets'] },
-      );
-      const classify = vi.spyOn(xssec.XsuaaSecurityContext.prototype, 'getGrantType');
-      const extract = vi.spyOn(attributes, 'extractXsuaaUserAttributes');
-      try {
-        await expect(check(jwt)).rejects.toBeInstanceOf(InvalidTokenError);
-        expect(classify).not.toHaveBeenCalled();
-        expect(extract).not.toHaveBeenCalled();
-      } finally {
-        classify.mockRestore();
-        extract.mockRestore();
-      }
-    },
-  );
+  it.each(
+    ['both', 'attributes only', 'principal only'].flatMap((mode) =>
+      ['wrong signature', 'expired', 'wrong audience'].map((failure) => ({ mode, failure })),
+    ),
+  )('validates an unsupported machine before classification: $failure, $mode', async ({ mode, failure }) => {
+    const jwt = await token(
+      { grant_type: 'client_credentials', ...(failure === 'expired' ? { exp: 1 } : {}) },
+      failure === 'wrong signature' ? unrelatedKey : key,
+    );
+    const check = createXsuaaTokenVerifier(
+      failure === 'wrong audience' ? { ...CREDS, clientid: 'other!t456', xsappname: 'other!t456' } : CREDS,
+      {
+        ...(mode !== 'attributes only' ? { requireUserToken: true } : {}),
+        ...(mode !== 'principal only' ? { userAttributeNames: ['arc1_targets'] } : {}),
+      },
+    );
+    const classify = vi.spyOn(xssec.XsuaaSecurityContext.prototype, 'getGrantType');
+    const extract = vi.spyOn(attributes, 'extractXsuaaUserAttributes');
+    try {
+      await expect(check(jwt)).rejects.toBeInstanceOf(InvalidTokenError);
+      expect(classify).not.toHaveBeenCalled();
+      expect(extract).not.toHaveBeenCalled();
+    } finally {
+      classify.mockRestore();
+      extract.mockRestore();
+    }
+  });
 
   it.each(['attributes only', 'principal only', 'neither'])(
     'accepts a valid user with %s without coupling the options',
@@ -176,11 +182,117 @@ describe('new verifier options with real @sap/xssec 4.x validation', () => {
     try {
       const response = await request(server).get('/mcp').set('Authorization', `Bearer ${jwt}`);
       expect(response.status).toBe(403);
-      expect(response.body.error).toBe('insufficient_scope');
-      expect(response.headers['www-authenticate']).toContain('error="insufficient_scope"');
+      expect(response.body.error).toBe('forbidden');
+      expect(response.headers['www-authenticate']).toContain('error="forbidden"');
       expect(oidc).not.toHaveBeenCalled();
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
+  it.each(['interactive', 'machine'])(
+    'does not make the MCP %s client reauthorize a forbidden principal',
+    async (mode) => {
+      const jwt = await token({ grant_type: 'client_credentials' });
+      const app = express();
+      app.post(
+        '/mcp',
+        requireBearerAuth({ verifier: { verifyAccessToken: verifier() }, requiredScopes: ['read'] }),
+        (_req, res) => res.sendStatus(202),
+      );
+      const server = app.listen(0, '127.0.0.1');
+      await new Promise<void>((resolve) => server.once('listening', resolve));
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Missing local test listener');
+      const url = new URL(`http://127.0.0.1:${address.port}/mcp`);
+      const redirectToAuthorization = vi.fn();
+      const saveTokens = vi.fn();
+      const fetchToken = vi.fn(() => new URLSearchParams({ grant_type: 'client_credentials' }));
+      const transportFetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        // Exercise actual middleware and transport. Never contact an external AS.
+        if (String(input) === url.href) return fetch(input, init);
+        return new Response(null, { status: 404 });
+      });
+      const transport = new StreamableHTTPClientTransport(url, {
+        authProvider: {
+          redirectUrl: mode === 'interactive' ? 'http://127.0.0.1/callback' : undefined,
+          clientMetadata: { redirect_uris: ['http://127.0.0.1/callback'] },
+          clientInformation: () => ({ client_id: 'test-client' }),
+          tokens: () => ({ access_token: jwt, token_type: 'Bearer' }),
+          saveTokens,
+          redirectToAuthorization,
+          saveCodeVerifier: vi.fn(),
+          codeVerifier: () => 'test-verifier',
+          prepareTokenRequest: fetchToken,
+        },
+        fetch: transportFetch,
+      });
+      try {
+        await transport.start();
+        // SDK 1.18 reports HTTP failures as plain Error (newer peers add .code).
+        await expect(transport.send({ jsonrpc: '2.0', method: 'notifications/test' })).rejects.toThrow(/forbidden/);
+        expect(transportFetch).toHaveBeenCalledTimes(1);
+        expect(redirectToAuthorization).not.toHaveBeenCalled();
+        expect(saveTokens).not.toHaveBeenCalled();
+        expect(fetchToken).not.toHaveBeenCalled();
+      } finally {
+        await transport.close();
+        await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+      }
+    },
+  );
+
+  it('keeps an ordinary missing-scope challenge as insufficient_scope', async () => {
+    const app = express();
+    app.get(
+      '/mcp',
+      requireBearerAuth({ verifier: { verifyAccessToken: verifier() }, requiredScopes: ['admin'] }),
+      (_req, res) => res.sendStatus(200),
+    );
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    try {
+      const response = await request(server)
+        .get('/mcp')
+        .set('Authorization', `Bearer ${await token()}`);
+      expect(response.status).toBe(403);
+      expect(response.body.error).toBe('insufficient_scope');
+      // Older supported peers omit the optional scope parameter in this header.
+      expect(response.headers['www-authenticate']).toContain('error="insufficient_scope"');
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
+  it.each(['creating security context', 'principal rejected', 'token verified'])(
+    'a throwing diagnostic logger cannot change principal enforcement at %s',
+    async (stage) => {
+      const logger = {
+        ...makeCapturingLogger(),
+        debug: vi.fn((message: string) => {
+          if (message.includes(stage)) throw new Error('diagnostic sink unavailable');
+        }),
+      };
+      const check = createXsuaaTokenVerifier(CREDS, { requireUserToken: true, logger });
+      const jwt = await token({ grant_type: 'client_credentials' });
+      const oidc = vi.fn().mockResolvedValue({ token: jwt, clientId: 'other', scopes: ['admin'] });
+      const chain = createChainedTokenVerifier({}, check, oidc);
+      await expect(chain(jwt)).rejects.toBeInstanceOf(XsuaaUserTokenRequiredError);
+      expect(oidc).not.toHaveBeenCalled();
+      expect((await check(await token())).scopes).toEqual(['read']);
+    },
+  );
+
+  it.each([false, true])('never grants inherited local scopes, with options enabled=%s', async (enabled) => {
+    const jwt = await token({ scope: undefined });
+    const control = await token();
+    const check = enabled ? verifier() : createXsuaaTokenVerifier(CREDS);
+    Object.defineProperty(Object.prototype, 'scope', { value: [`${CREDS.xsappname}.admin`], configurable: true });
+    try {
+      expect((await check(jwt)).scopes).toEqual([]);
+      expect((await check(control)).scopes).toEqual(['read']);
+    } finally {
+      Reflect.deleteProperty(Object.prototype, 'scope');
     }
   });
 
@@ -294,6 +406,8 @@ describe('new verifier options with real @sap/xssec 4.x validation', () => {
 
   it.each([
     { ext_cxt: null, expected: ['A4H/001'], status: 'valid' },
+    { ext_cxt: {}, expected: ['A4H/001'], status: 'valid' },
+    { ext_cxt: { unrelated: 'value' }, expected: ['A4H/001'], status: 'valid' },
     { ext_cxt: { 'xs.user.attributes': null }, expected: ['A4H/001'], status: 'valid' },
     { ext_cxt: { 'xs.user.attributes': {} }, expected: undefined, status: 'missing' },
     { ext_cxt: { 'xs.user.attributes': false }, expected: undefined, status: 'invalid' },

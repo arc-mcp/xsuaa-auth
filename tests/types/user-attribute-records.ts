@@ -1,5 +1,13 @@
 import type { XsuaaUserAttributeStatuses, XsuaaUserAttributes } from '../../src/index.js';
 
+// Consumers can build fixtures and accept sparse dictionary inputs without casts.
+export const emptyValues: XsuaaUserAttributes = {};
+export const literalValues: XsuaaUserAttributes = { target: ['A4H/100'] };
+export const emptyStatuses: XsuaaUserAttributeStatuses = {};
+export const literalStatuses: XsuaaUserAttributeStatuses = { target: 'valid' };
+const dictionary: Readonly<Record<string, readonly string[] | undefined>> = { target: ['A4H/100'] };
+export const dictionaryValues: XsuaaUserAttributes = dictionary;
+
 // Compiled by npm run typecheck; never executed. An unused expect-error fails CI.
 export function checkSparseReadonlyRecords(values: XsuaaUserAttributes, statuses: XsuaaUserAttributeStatuses) {
   // @ts-expect-error arbitrary keys may be absent

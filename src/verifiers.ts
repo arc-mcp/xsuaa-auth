@@ -13,12 +13,12 @@
  */
 
 import crypto from 'node:crypto';
+import { diagnosticLogger } from './internal/diagnostic-logger.js';
 import type { AuthInfo } from './internal/sdk.js';
 import { InvalidTokenError } from './internal/sdk.js';
 import type { Logger } from './logger.js';
-import { noopLogger } from './logger.js';
 import type { ApiKeyEntry, ExpandScopes, Verifier } from './types.js';
-import { XsuaaUserTokenRequiredError } from './xsuaa-user-principal.js';
+import { principalRejection } from './xsuaa-user-principal.js';
 
 const IDENTITY: ExpandScopes = (s) => s;
 
@@ -90,7 +90,7 @@ export function createApiKeyVerifier(
   keys: string | ApiKeyEntry[],
   options: { expandScopes?: ExpandScopes; logger?: Logger } = {},
 ): Verifier {
-  const logger = options.logger ?? noopLogger;
+  const logger = diagnosticLogger(options.logger);
   const expandScopes = options.expandScopes ?? IDENTITY;
   const entries = normalizeApiKeys(keys);
 
@@ -138,7 +138,7 @@ export function createApiKeyVerifier(
 function extractOidcScopes(
   payload: Record<string, unknown>,
   expandScopes: ExpandScopes,
-  logger: Logger,
+  logger: Pick<Logger, 'warn'>,
   scopeClaim = 'scope',
   acceptedScopes: string[] = DEFAULT_ACCEPTED_SCOPES,
   fallbackScopes: string[] = [],
@@ -204,7 +204,7 @@ export function createOidcVerifier(
     logger?: Logger;
   } = {},
 ): Verifier {
-  const logger = options.logger ?? noopLogger;
+  const logger = diagnosticLogger(options.logger);
   const expandScopes = options.expandScopes ?? IDENTITY;
   const algorithms = options.algorithms ?? DEFAULT_OIDC_ALGORITHMS;
   const scopeClaim = options.scopeClaim ?? 'scope';
@@ -297,8 +297,9 @@ export function createOidcVerifier(
  *
  * Each provided verifier is tried in turn; the first that resolves wins. If none
  * authenticate, throws {@link InvalidTokenError}. An authenticated XSUAA
- * principal rejected by requireUserToken throws {@link XsuaaUserTokenRequiredError}
- * immediately; it must not fall through to another method.
+ * principal rejected by requireUserToken throws XsuaaUserTokenRequiredError
+ * immediately, even if wrapped in an own Error.cause or composed in the OIDC
+ * slot; it must not fall through to another method.
  *
  * **`expandScopes` is applied exactly once — by the sub-verifiers, NOT here.** The
  * XSUAA/OIDC/api-key verifiers each expand the scopes they extract; the chain
@@ -316,7 +317,7 @@ export function createChainedTokenVerifier(
   oidcVerifier?: Verifier,
   options: { expandScopes?: ExpandScopes; logger?: Logger } = {},
 ): Verifier {
-  const logger = options.logger ?? noopLogger;
+  const logger = diagnosticLogger(options.logger);
   const expandScopes = options.expandScopes ?? IDENTITY;
 
   const hasApiKeys =
@@ -324,7 +325,7 @@ export function createChainedTokenVerifier(
     (typeof config.apiKeys === 'string' ? config.apiKeys.length > 0 : config.apiKeys.length > 0);
   const apiKeyVerifier =
     hasApiKeys && config.apiKeys !== undefined
-      ? createApiKeyVerifier(config.apiKeys, { expandScopes, logger })
+      ? createApiKeyVerifier(config.apiKeys, { expandScopes, logger: options.logger })
       : undefined;
 
   return async (token: string): Promise<AuthInfo> => {
@@ -345,11 +346,10 @@ export function createChainedTokenVerifier(
       } catch (err) {
         // This token was authenticated by XSUAA but its principal was forbidden.
         // A second verifier must not turn that authorization failure into access.
-        if (err instanceof XsuaaUserTokenRequiredError) throw err;
-        if (typeof err === 'object' && err !== null && 'code' in err && err.code === 'XSUAA_USER_TOKEN_REQUIRED') {
-          // A separately loaded package copy has a different class identity.
-          // Normalize its stable code to our SDK-compatible, fixed-message error.
-          throw new XsuaaUserTokenRequiredError();
+        const denial = principalRejection(err);
+        if (denial) {
+          logger.debug('Chained token verifier: principal rejected', { method: 'XSUAA', code: denial.code });
+          throw denial;
         }
         logger.debug('Chained token verifier: XSUAA failed, trying next', {
           error: err instanceof Error ? err.message : String(err),
@@ -367,6 +367,11 @@ export function createChainedTokenVerifier(
         });
         return result;
       } catch (err) {
+        const denial = principalRejection(err);
+        if (denial) {
+          logger.debug('Chained token verifier: principal rejected', { method: 'OIDC', code: denial.code });
+          throw denial;
+        }
         logger.debug('Chained token verifier: OIDC failed, trying next', {
           error: err instanceof Error ? err.message : String(err),
         });

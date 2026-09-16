@@ -19,7 +19,7 @@
 import { type CryptoKey, exportJWK, generateKeyPair, type JWK, SignJWT } from 'jose';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type AuthInfo, createApiKeyVerifier, createChainedTokenVerifier, createOidcVerifier } from '../src/index.js';
-import { InvalidTokenError } from '../src/internal/sdk.js';
+import { InsufficientScopeError, InvalidTokenError } from '../src/internal/sdk.js';
 import { XsuaaUserTokenRequiredError } from '../src/xsuaa-user-principal.js';
 import { makeCapturingLogger } from './helpers/test-logger.js';
 
@@ -155,6 +155,20 @@ describe('createOidcVerifier', () => {
     const info = await verify(token);
     // Default fallbackScopes is [] — an IdP that omits scope claims grants nothing.
     expect(info.scopes).toEqual([]);
+  });
+
+  it('keeps OIDC authentication and no-scope policy when diagnostic methods throw', async () => {
+    stubDiscoveryFetch();
+    const fail = () => {
+      throw new Error('diagnostic sink unavailable');
+    };
+    const logger = { ...makeCapturingLogger(), debug: fail, info: fail, warn: fail };
+    const verify = createOidcVerifier(ISSUER, AUDIENCE, { logger });
+    expect((await verify(await mintToken({ scope: 'read', sub: 'user' }))).scopes).toEqual(['read']);
+    expect((await verify(await mintToken({ sub: 'user' }))).scopes).toEqual([]);
+    await expect(verify(await mintToken({ sub: 'user' }, { audience: 'other' }))).rejects.toBeInstanceOf(
+      InvalidTokenError,
+    );
   });
 
   it('grants the opt-in fallbackScopes (legacy read-only) when the token has no scope/scp claims', async () => {
@@ -406,6 +420,99 @@ describe('createChainedTokenVerifier', () => {
     await expect(check('token')).rejects.toBeInstanceOf(XsuaaUserTokenRequiredError);
     await expect(check('token')).rejects.toThrow('A supported user principal is required');
     expect(oidc).not.toHaveBeenCalled();
+  });
+
+  it('pins the public principal-rejection code and non-retryable HTTP error', () => {
+    const error = new XsuaaUserTokenRequiredError();
+    expect(error.code).toBe('XSUAA_USER_TOKEN_REQUIRED');
+    expect(Object.hasOwn(error, 'code')).toBe(true);
+    expect(error.errorCode).toBe('forbidden');
+  });
+
+  it.each(['XSUAA', 'OIDC'].flatMap((slot) => ['direct', 'cause', 'foreign cause'].map((form) => ({ slot, form }))))(
+    'preserves a $form principal denial in the $slot slot',
+    async ({ slot, form }) => {
+      const rejection =
+        form === 'foreign cause'
+          ? Object.assign(new Error('foreign text'), { code: 'XSUAA_USER_TOKEN_REQUIRED' })
+          : new XsuaaUserTokenRequiredError();
+      const error = form === 'direct' ? rejection : new Error('wrapper', { cause: rejection });
+      const fail = vi.fn().mockRejectedValue(error);
+      const fallback = vi.fn().mockResolvedValue({ token: 'token', clientId: 'other', scopes: ['admin'] });
+      const logger = makeCapturingLogger();
+      const check = createChainedTokenVerifier(
+        { apiKeys: 'token' },
+        slot === 'XSUAA' ? fail : undefined,
+        slot === 'OIDC' ? fail : fallback,
+        { logger },
+      );
+      await expect(check('token')).rejects.toBeInstanceOf(XsuaaUserTokenRequiredError);
+      expect(fallback).not.toHaveBeenCalled();
+      expect(logger.debugs).toContainEqual({
+        message: 'Chained token verifier: principal rejected',
+        data: { method: slot, code: 'XSUAA_USER_TOKEN_REQUIRED' },
+      });
+      expect(JSON.stringify(logger)).not.toContain('foreign text');
+      expect(JSON.stringify(logger)).not.toContain('wrapper');
+    },
+  );
+
+  it.each(['inherited code', 'code getter', 'inherited cause', 'cause getter', 'cycle'])(
+    'does not use %s to invent a terminal principal denial',
+    async (form) => {
+      const error = new Error('ordinary validation failure');
+      const getter = vi.fn(() => {
+        throw new Error('accessor must not execute');
+      });
+      if (form === 'inherited code') Object.setPrototypeOf(error, { code: 'XSUAA_USER_TOKEN_REQUIRED' });
+      if (form === 'code getter') Object.defineProperty(error, 'code', { get: getter });
+      if (form === 'inherited cause') Object.setPrototypeOf(error, { cause: new XsuaaUserTokenRequiredError() });
+      if (form === 'cause getter') Object.defineProperty(error, 'cause', { get: getter });
+      if (form === 'cycle') Object.defineProperty(error, 'cause', { value: error });
+      const check = createChainedTokenVerifier({ apiKeys: 'token' }, vi.fn().mockRejectedValue(error));
+      expect((await check('token')).clientId).toBe('api-key');
+      expect(getter).not.toHaveBeenCalled();
+    },
+  );
+
+  it('retains a terminal denial through a long finite cause chain', async () => {
+    let error: Error = new XsuaaUserTokenRequiredError();
+    for (let i = 0; i < 128; i++) error = new Error('wrapper', { cause: error });
+    const check = createChainedTokenVerifier({ apiKeys: 'token' }, vi.fn().mockRejectedValue(error));
+    await expect(check('token')).rejects.toBeInstanceOf(XsuaaUserTokenRequiredError);
+  });
+
+  it('preserves existing OR behavior for generic scope errors, not principal denials', async () => {
+    const check = createChainedTokenVerifier(
+      { apiKeys: 'token' },
+      vi.fn().mockRejectedValue(new InsufficientScopeError('generic XSUAA scope failure')),
+      vi.fn().mockRejectedValue(new InsufficientScopeError('generic OIDC scope failure')),
+    );
+    expect((await check('token')).clientId).toBe('api-key');
+  });
+
+  it('does not convert a failed chain diagnostic into fallback authentication', async () => {
+    const logger = {
+      ...makeCapturingLogger(),
+      debug: () => {
+        throw new Error('broken logger');
+      },
+    };
+    const accepted = { token: 'token', clientId: 'xsuaa-client', scopes: ['read'] };
+    const oidc = vi.fn().mockResolvedValue({ ...accepted, scopes: ['admin'] });
+    const chain = createChainedTokenVerifier({}, vi.fn().mockResolvedValue(accepted), oidc, { logger });
+    expect(await chain('token')).toBe(accepted);
+    expect(oidc).not.toHaveBeenCalled();
+    const denied = createChainedTokenVerifier(
+      { apiKeys: 'token' },
+      vi.fn().mockRejectedValue(new XsuaaUserTokenRequiredError()),
+      oidc,
+      { logger },
+    );
+    await expect(denied('token')).rejects.toBeInstanceOf(XsuaaUserTokenRequiredError);
+    expect(
+      (await createChainedTokenVerifier({ apiKeys: 'token' }, undefined, undefined, { logger })('token')).clientId,
+    ).toBe('api-key');
   });
 
   it('throws InvalidTokenError when all verifiers fail and no API key', async () => {

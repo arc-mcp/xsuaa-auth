@@ -95,13 +95,16 @@ describe('verified XSUAA user attribute extraction', () => {
     const info = extract(raw);
     expect(info.xsuaaUserAttributeStatus.target).toBe('limit_exceeded');
     expect(info.xsuaaUserAttributes).toEqual({});
-    expect(extract(Array(1_024).fill('same')).xsuaaUserAttributes.target).toHaveLength(1_024);
+    expect(extract(Array(1_024).fill('same')).xsuaaUserAttributes.target).toEqual(Array(1_024).fill('same'));
   });
 
   it('enforces UTF-8 byte lengths, not JS character counts', () => {
-    expect(extract('é'.repeat(512)).xsuaaUserAttributeStatus.target).toBe('valid');
-    expect(extract(`${'é'.repeat(512)}x`).xsuaaUserAttributeStatus.target).toBe('limit_exceeded');
-    expect(extract('é'.repeat(513)).xsuaaUserAttributeStatus.target).toBe('limit_exceeded');
+    for (const raw of ['é'.repeat(511), 'é'.repeat(512), `${'é'.repeat(512)}x`, 'é'.repeat(513)]) {
+      const info = extract(raw);
+      const valid = Buffer.byteLength(raw, 'utf8') <= 1_024;
+      expect(info.xsuaaUserAttributeStatus.target).toBe(valid ? 'valid' : 'limit_exceeded');
+      expect(info.xsuaaUserAttributes).toEqual(valid ? { target: [raw] } : {});
+    }
   });
 
   it('retains unrelated valid names after a per-name limit failure', () => {
@@ -155,8 +158,11 @@ describe('verified XSUAA user attribute extraction', () => {
 
   it.each([1_023, 1_024, 1_025])('pins ASCII value-byte and raw-entry limits at %i', (size) => {
     const expected = size <= 1_024 ? 'valid' : 'limit_exceeded';
-    expect(extract('x'.repeat(size)).xsuaaUserAttributeStatus.target).toBe(expected);
-    expect(extract(Array(size).fill('x')).xsuaaUserAttributeStatus.target).toBe(expected);
+    for (const raw of ['x'.repeat(size), Array(size).fill('x')]) {
+      const info = extract(raw);
+      expect(info.xsuaaUserAttributeStatus.target).toBe(expected);
+      expect(info.xsuaaUserAttributes).toEqual(size <= 1_024 ? { target: typeof raw === 'string' ? [raw] : raw } : {});
+    }
   });
 
   it('rejects every requested name on aggregate overflow, independent of allowlist order', () => {

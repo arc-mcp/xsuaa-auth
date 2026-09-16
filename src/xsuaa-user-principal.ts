@@ -1,13 +1,37 @@
 import { InsufficientScopeError } from './internal/sdk.js';
 
+export const XSUAA_USER_TOKEN_REQUIRED = 'XSUAA_USER_TOKEN_REQUIRED';
+
 /** A validated token does not carry a supported XSUAA user principal. */
 export class XsuaaUserTokenRequiredError extends InsufficientScopeError {
-  readonly code = 'XSUAA_USER_TOKEN_REQUIRED';
+  // Keep the SDK's HTTP 403 mapping without advertising a scope escalation that
+  // cannot change a machine principal into a user. `forbidden` is our wire code.
+  static override errorCode = 'forbidden';
+  readonly code = XSUAA_USER_TOKEN_REQUIRED;
 
   constructor() {
     super('A supported user principal is required');
     this.name = 'XsuaaUserTokenRequiredError';
   }
+}
+
+/** Recognize only trusted verifier exceptions, including own Error.cause wrappers. */
+export function principalRejection(error: unknown): XsuaaUserTokenRequiredError | undefined {
+  const seen = new Set<object>();
+  let current = error;
+  while (typeof current === 'object' && current !== null && !seen.has(current)) {
+    seen.add(current);
+    if (current instanceof XsuaaUserTokenRequiredError) return current;
+    const code = Object.getOwnPropertyDescriptor(current, 'code');
+    if (code && Object.hasOwn(code, 'value') && code.value === XSUAA_USER_TOKEN_REQUIRED) {
+      // Another package copy: retain the fixed local message and SDK identity.
+      return new XsuaaUserTokenRequiredError();
+    }
+    const cause = Object.getOwnPropertyDescriptor(current, 'cause');
+    // Do not execute getters or accept inherited code/cause as policy evidence.
+    current = cause && Object.hasOwn(cause, 'value') ? cause.value : undefined;
+  }
+  return undefined;
 }
 
 const USER_GRANTS = new Set(['authorization_code', 'refresh_token', 'urn:ietf:params:oauth:grant-type:jwt-bearer']);

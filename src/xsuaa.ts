@@ -16,13 +16,17 @@
  */
 
 import xssec from '@sap/xssec';
+import { diagnosticLogger } from './internal/diagnostic-logger.js';
 import { type AuthInfo, InvalidTokenError } from './internal/sdk.js';
 import type { Logger } from './logger.js';
-import { noopLogger } from './logger.js';
 import type { ExpandScopes, Verifier } from './types.js';
 import { DEFAULT_ACCEPTED_SCOPES } from './verifiers.js';
 import { extractXsuaaUserAttributes, validateUserAttributeNames } from './xsuaa-user-attributes.js';
-import { hasSupportedXsuaaUserPrincipal, XsuaaUserTokenRequiredError } from './xsuaa-user-principal.js';
+import {
+  hasSupportedXsuaaUserPrincipal,
+  XSUAA_USER_TOKEN_REQUIRED,
+  XsuaaUserTokenRequiredError,
+} from './xsuaa-user-principal.js';
 
 // `@sap/xssec` is pure CommonJS (no ESM entry) → default-import + destructure
 // with esModuleInterop (SPEC §12, documented interop edge).
@@ -69,7 +73,7 @@ export function createXsuaaTokenVerifier(
   credentials: XsuaaCredentials,
   options: XsuaaTokenVerifierOptions = {},
 ): Verifier {
-  const logger = options.logger ?? noopLogger;
+  const logger = diagnosticLogger(options.logger);
   const expandScopes = options.expandScopes ?? ((s: string[]): string[] => s);
   const acceptedScopes = options.acceptedScopes ?? DEFAULT_ACCEPTED_SCOPES;
   const userAttributeNames = validateUserAttributeNames(options.userAttributeNames);
@@ -103,7 +107,7 @@ export function createXsuaaTokenVerifier(
     const userPrincipal =
       requireUserToken || userAttributeNames !== undefined ? hasSupportedXsuaaUserPrincipal(securityContext) : false;
     if (requireUserToken && !userPrincipal) {
-      logger.debug('XSUAA principal rejected', { code: 'XSUAA_USER_TOKEN_REQUIRED' });
+      logger.debug('XSUAA principal rejected', { code: XSUAA_USER_TOKEN_REQUIRED });
       throw new XsuaaUserTokenRequiredError();
     }
     const userAttributes =
@@ -116,7 +120,9 @@ export function createXsuaaTokenVerifier(
     // the prefix, so we probe each accepted short name.
     const grantedScopes: string[] = [];
     for (const scope of acceptedScopes) {
-      if (securityContext.checkLocalScope(scope)) {
+      // xssec reads payload.scope through normal property lookup. Only an own
+      // signed claim may supply local grants; continue using SAP's scope logic.
+      if (Object.hasOwn(securityContext.token.payload, 'scope') && securityContext.checkLocalScope(scope)) {
         grantedScopes.push(scope);
       }
     }

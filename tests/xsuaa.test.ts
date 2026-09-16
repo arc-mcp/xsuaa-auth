@@ -42,6 +42,7 @@ const createSecurityContextMock = vi.fn(async () => ({
   token: {
     payload: {
       exp: securityContextState.exp,
+      scope: [...securityContextState.scopes],
       grant_type: securityContextState.grantType,
       origin: securityContextState.origin,
       user_name: securityContextState.logonName,

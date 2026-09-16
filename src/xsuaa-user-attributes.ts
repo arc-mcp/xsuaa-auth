@@ -2,16 +2,10 @@
 
 export type XsuaaUserAttributeStatus = 'valid' | 'missing' | 'invalid' | 'limit_exceeded';
 /** Sparse dictionaries have no Object.prototype methods. Use Object.hasOwn(). */
-type NullPrototypeRecord<Value> = {
-  [name: string]: Value | undefined;
-  hasOwnProperty?: never;
-  isPrototypeOf?: never;
-  propertyIsEnumerable?: never;
-  toLocaleString?: never;
-  toString?: never;
-  valueOf?: never;
-  constructor?: never;
-};
+// Widen Object members to non-callable unknown without making ordinary sparse
+// dictionary fixtures unassignable (optional-never members reject even {}).
+// biome-ignore lint/complexity/noBannedTypes: enumerate Object's methods, not arbitrary object values
+type NullPrototypeRecord<Value> = Record<string, Value | undefined> & { [K in keyof Object]?: unknown };
 export type XsuaaUserAttributes = Readonly<NullPrototypeRecord<readonly string[]>>;
 export type XsuaaUserAttributeStatuses = Readonly<NullPrototypeRecord<XsuaaUserAttributeStatus>>;
 
@@ -62,7 +56,8 @@ function verifiedAttributeContainer(payload: unknown): Record<string, unknown> |
 /**
  * Only call on a context returned by XsuaaService.createSecurityContext().
  * Oversized arrays are not traversed or copied. The aggregate byte budget applies
- * to bounded candidate values; a per-name rejected array is not extracted.
+ * only to otherwise valid candidates; bytes of a per-name rejected list or
+ * string do not consume another name's budget.
  */
 export function extractXsuaaUserAttributes(
   context: { token: { payload: unknown } },
