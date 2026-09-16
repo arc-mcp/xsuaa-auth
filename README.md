@@ -149,17 +149,19 @@ scope named `user_attributes` to activate this feature.
 
 `requireUserToken` rejects machine or unknown principals with the exported
 `XsuaaUserTokenRequiredError`. It extends the MCP SDK's `InsufficientScopeError`, so
-`requireBearerAuth` returns **403** (`insufficient_scope`); ordinary `InvalidTokenError` remains
+`requireBearerAuth` returns **403** with this package's `forbidden` wire code, not an
+`insufficient_scope` step-up challenge; ordinary `InvalidTokenError` remains
 **401**. A custom adapter can instead map its stable `XSUAA_USER_TOKEN_REQUIRED` code to a generic
 403. A machine principal cannot satisfy this policy by requesting more scopes. Do not parse error
 messages or retry another authentication method after this terminal error; the package's chain
-preserves it, including errors from separately loaded package copies.
+preserves it in either JWT verifier slot, including own `Error.cause` wrappers and errors from
+separately loaded package copies. Ordinary missing-scope challenges remain `insufficient_scope`.
 
 The chain still tries other verifiers after an ordinary validation/JWKS failure. Do not configure
 an alternative verifier that accepts the same XSUAA tokens with a weaker principal policy. For a
 user-only XSUAA route, use the configured XSUAA verifier directly. Attribute extraction alone is
 not proof of a user principal or application permission; enforce the required local scopes too.
-See [the attribute/principal contract and live-evidence gates](docs/USER-ATTRIBUTES.md).
+See [the attribute/principal contract and live-evidence gates](https://github.com/arc-mcp/xsuaa-auth/blob/main/docs/USER-ATTRIBUTES.md).
 
 ---
 

@@ -179,18 +179,17 @@ export interface XsuaaTokenVerifierOptions {
 }
 export type XsuaaUserAttributeStatus = 'valid' | 'missing' | 'invalid' | 'limit_exceeded';
 // Sparse, null-prototype records: absent keys are undefined; no instance Object methods.
-type NullPrototypeRecord<Value> = {
-  [name: string]: Value | undefined;
-  hasOwnProperty?: never; isPrototypeOf?: never; propertyIsEnumerable?: never;
-  toLocaleString?: never; toString?: never; valueOf?: never; constructor?: never;
-};
+type NullPrototypeRecord<Value> = Record<string, Value | undefined> & { [K in keyof Object]?: unknown };
 export type XsuaaUserAttributes = Readonly<NullPrototypeRecord<readonly string[]>>;
 export type XsuaaUserAttributeStatuses = Readonly<NullPrototypeRecord<XsuaaUserAttributeStatus>>;
 export interface XsuaaUserAttributeInfo {
   readonly xsuaaUserAttributes: XsuaaUserAttributes;
   readonly xsuaaUserAttributeStatus: XsuaaUserAttributeStatuses;
 }
-export class XsuaaUserTokenRequiredError extends InsufficientScopeError { readonly code: 'XSUAA_USER_TOKEN_REQUIRED'; }
+export class XsuaaUserTokenRequiredError extends InsufficientScopeError {
+  static errorCode: string; // 'forbidden', not a scope-escalation challenge
+  readonly code: 'XSUAA_USER_TOKEN_REQUIRED';
+}
 export function createOidcVerifier(   // lazy-imports jose
   issuer: string, audience: string,
   options?: { clockToleranceSec?: number; scopeClaim?: string; algorithms?: string[]; acceptedScopes?: string[]; fallbackScopes?: string[]; expandScopes?: ExpandScopes; logger?: Logger },
@@ -239,7 +238,7 @@ Notes:
 - **api-key profiles** are not a package concept: arc-1 maps its `API_KEY_PROFILES` → `ApiKeyEntry[]` (`{key, scopes}`) before passing.
 - The facade does **not** include arc-1's Copilot `/authorize` bypass or reverse-proxy base-path overrides — those stay in arc-1's `startHttpServer` using the building blocks.
 - When `options.xsuaa` is omitted (api-key/OIDC only), the facade builds the chained verifier and returns bearer middleware **without** mounting the OAuth router/callback — mirroring arc-1's non-XSUAA path (`createStandardVerifier`).
-- **Verifier chain order is frozen as `XSUAA → OIDC → api-key`** (matches arc-1). The first accepted result wins; ordinary validation failures try the next independent method, and exhaustion throws `InvalidTokenError`. A validated principal denied by `requireUserToken` throws `XsuaaUserTokenRequiredError` immediately; its stable code is also recognized across package copies. Do not overlap XSUAA/OIDC trust with a weaker principal policy. Use the XSUAA verifier directly on user-only XSUAA routes. Native SDK middleware maps principal denial to 403 and invalid tokens to 401. calmcp's PR adapts from its current api-key-first order (called out in its PR description).
+- **Verifier chain order is frozen as `XSUAA → OIDC → api-key`** (matches arc-1). The first accepted result wins; ordinary validation failures try the next independent method, and exhaustion throws `InvalidTokenError`. A validated principal denied by `requireUserToken` throws `XsuaaUserTokenRequiredError` immediately in either JWT slot; its stable own data code is also recognized across package copies and own data `Error.cause` wrappers, without executing getters. Cause cycles terminate safely. Do not overlap XSUAA/OIDC trust with a weaker principal policy. Use the XSUAA verifier directly on user-only XSUAA routes. Native SDK middleware maps principal denial to 403 (`forbidden`, not a retryable scope challenge) and invalid tokens to 401. Generic scope errors retain the existing chain behavior. Diagnostic logger exceptions cannot change verification outcomes; this is not a new audit-delivery contract. calmcp's PR adapts from its current api-key-first order (called out in its PR description).
 - **CORS + COOP (browser / popup OAuth):** when `allowedOrigins` is set the facade applies a built-in exact-match CORS handler (`credentials:true` + MCP headers; no `cors` dep). The facade sets **no restrictive `Cross-Origin-Opener-Policy`** — popup OAuth (Copilot Studio, claude.ai) breaks under `COOP: same-origin`. Broad hardening (helmet CSP/HSTS) stays consumer-owned; a consumer adding helmet must disable COOP. arc-1 keeps its own `applySecurityMiddleware` via the building-block path.
 - **Redirect-URI validation is fail-closed (normative):** `validateRedirectUri` throws on malformed/disallowed input; `matchesRedirectPattern` returns `false` on parse failure. The DCR store's `redirectUriPatterns` MUST stay in sync with the XSUAA service's `xs-security.json` `oauth2-configuration.redirect-uris`.
 - **`emitAudit` is always null-guarded** (`logger.emitAudit?.(…)`); the package never assumes it exists.

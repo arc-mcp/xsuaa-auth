@@ -6,6 +6,11 @@ Scope: the candidate verified XSUAA attributes / optional user-principal enforce
 No IAM configuration, CF deployment, package publication or default auth policy is changed by
 this review. Both verifier options remain opt-in; the facade does not enable them implicitly.
 
+This records the **first** review at `fa8907a`. The
+[follow-up review](2026-09-16-pr70-follow-up-review.md) supersedes its native-403 wire-code,
+type-assignability and terminal-composition conclusions below; the first round's test counts
+remain historical evidence, not the latest total.
+
 ## Disposition of all 15 findings
 
 | # | Finding | Decision and evidence |
@@ -23,7 +28,7 @@ this review. Both verifier options remain opt-in; the facade does not enable the
 | 11 | Rejected names' bytes count toward the global budget | **Fixed.** Accumulate a name's bytes only after that candidate passes per-name validation. A malformed/oversized name no longer poisons an unrelated valid name; overflow across valid candidates still rejects all names without truncation and independently of allowlist order. |
 | 12 | Chain terminal rethrow keyed only on class identity | **Fixed.** Recognize `XSUAA_USER_TOKEN_REQUIRED` on a verifier exception from another package copy and normalize to the local SDK-compatible error. Never trust a request/token field or copy an arbitrary exception message. A regression test asserts no alternative verifier runs. |
 | 13 | Chain JSDoc/SPEC stale after terminal rethrow | **Fixed.** Document the difference between authentication failures and authenticated-principal authorization denial. Remove the false claim that configured JWT trust domains must be disjoint. |
-| 14 | Documented limits not pinned by boundary tests | **Coverage added.** Include exact 64-character names, 1,023/1,024/1,025 value-byte and entry boundaries, multibyte UTF-8, and 65,535/65,536/65,537 aggregate bytes. Exact-boundary acceptance asserts the full values, not statuses alone. Oversized arrays remain untraversed. |
+| 14 | Documented limits not pinned by boundary tests | **Coverage added.** Include exact 64-character names, 1,023/1,024/1,025 value-byte and entry boundaries, multibyte UTF-8, and 65,535/65,536/65,537 aggregate bytes. At this revision the aggregate-byte cases assert full values; some per-value/entry cases assert only status or length. The follow-up closes that coverage gap. Oversized arrays remain untraversed. |
 | 15 | Public export section comment misplaced | **Corrected.** Label the verified-attribute/principal exports separately from OAuth provider exports. No API or runtime change. |
 
 ## Boundary and compatibility checks
@@ -39,9 +44,9 @@ multi-target HTTP boundary separately requires local `read` before exposing targ
 and its dispatcher enforces scopes again. Delegated tokens with local scopes still require the
 unresolved live same-named-attribute provenance check; this distinction does not dismiss that gate.
 
-The 403 transport uses the SDK's existing `insufficient_scope` error category. Applications that
-want a principal-specific response can retain their custom adapter and use the stable code. A
-machine principal cannot fix this rejection by consenting to more scopes. The special chain
+At this first-review revision the 403 transport used the SDK's `insufficient_scope` category.
+The follow-up demonstrated unnecessary OAuth retries and changes it to `forbidden`, while keeping
+the SDK's native 403 mapping. A machine principal cannot fix this rejection by consenting to more scopes. The special chain
 handling only applies after a verifier returns the typed/coded terminal denial; independent
 authentication failures continue to fall back.
 
@@ -91,4 +96,4 @@ stale-session recovery/revocation window. A simple `cid === binding.clientid` ru
 request or short access-token lifetime has not been demonstrated to solve those questions.
 
 See the [contract and SAP sources](../USER-ATTRIBUTES.md) and
-[ARC-1's detailed live record](https://github.com/arc-mcp/arc-1/blob/codex/xsuaa-target-authorization-spec/docs/research/2026-09-15-pr677-target-authorization-implementation.md).
+[ARC-1's detailed live record](https://github.com/arc-mcp/arc-1/blob/cb7da96672915b0ab82e3e3724bcd0418f2564d5/docs/research/2026-09-15-pr677-target-authorization-implementation.md).
