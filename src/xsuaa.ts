@@ -18,6 +18,7 @@
 import xssec from '@sap/xssec';
 import { diagnosticError, diagnosticLogger } from './internal/diagnostic-logger.js';
 import { type AuthInfo, InvalidTokenError } from './internal/sdk.js';
+import { assertAuthInfo } from './internal/verifier-result.js';
 import type { Logger } from './logger.js';
 import type { ExpandScopes, Verifier } from './types.js';
 import { DEFAULT_ACCEPTED_SCOPES } from './verifiers.js';
@@ -145,13 +146,14 @@ export function createXsuaaTokenVerifier(
         ...userAttributes,
       },
     };
+    assertAuthInfo(authInfo, logger, 'XSUAA');
     // Don't log email / userName (PII) by default — log counts + boolean presence.
-    logger.debug('XSUAA token verified', {
+    logger.debug('XSUAA token verified', () => ({
       clientId: authInfo.clientId,
       scopeCount: expandedScopes.length,
       hasUserName: authInfo.extra.userName != null,
       hasEmail: authInfo.extra.email != null,
-    });
+    }));
     return authInfo;
   };
 }

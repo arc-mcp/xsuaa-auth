@@ -21,6 +21,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type AuthInfo, createApiKeyVerifier, createChainedTokenVerifier, createOidcVerifier } from '../src/index.js';
 import { InsufficientScopeError, InvalidTokenError } from '../src/internal/sdk.js';
 import { XsuaaUserTokenRequiredError } from '../src/xsuaa-user-principal.js';
+import { expectMalformedVerifier, malformedScopes } from './helpers/malformed-verifier.js';
 import { makeCapturingLogger } from './helpers/test-logger.js';
 
 afterEach(() => {
@@ -31,6 +32,23 @@ afterEach(() => {
 // ─── createApiKeyVerifier ────────────────────────────────────────────
 
 describe('createApiKeyVerifier', () => {
+  it.each(malformedScopes)(
+    'rejects malformed expanded scopes directly and in the chain: $label',
+    async ({ scopes }) => {
+      const logger = makeCapturingLogger();
+      const expandScopes = () => scopes as string[];
+      await expectMalformedVerifier(createApiKeyVerifier('private-key', { expandScopes, logger }), 'private-key');
+      await expectMalformedVerifier(
+        createChainedTokenVerifier({ apiKeys: 'private-key' }, undefined, undefined, { expandScopes, logger }),
+        'private-key',
+      );
+      expect(logger.warns).toContainEqual({
+        message: 'Verifier integration failure',
+        data: { method: 'API key', reason: 'malformed_auth_info' },
+      });
+      expect(JSON.stringify(logger)).not.toContain('private-key');
+    },
+  );
   it('accepts a single-string key and returns clientId "api-key" with no scopes', async () => {
     const verify = createApiKeyVerifier('s3cret');
     const info = await verify('s3cret');
@@ -136,6 +154,39 @@ describe('createOidcVerifier', () => {
     publicJwk.kid = 'test-kid';
     publicJwk.alg = 'RS256';
     publicJwk.use = 'sig';
+  });
+
+  it.each(malformedScopes)(
+    'rejects malformed OIDC expanded scopes directly and in the chain: $label',
+    async ({ scopes }) => {
+      stubDiscoveryFetch();
+      const jwt = await mintToken({ scope: 'read', sub: 'private-user' });
+      const logger = makeCapturingLogger();
+      const verify = createOidcVerifier(ISSUER, AUDIENCE, { expandScopes: () => scopes as string[], logger });
+      await expectMalformedVerifier(verify, jwt);
+      await expectMalformedVerifier(
+        createChainedTokenVerifier({ apiKeys: [{ key: jwt, scopes: ['admin'] }] }, undefined, verify, { logger }),
+        jwt,
+      );
+      expect(logger.warns).toContainEqual({
+        message: 'Verifier integration failure',
+        data: { method: 'OIDC', reason: 'malformed_auth_info' },
+      });
+      expect(JSON.stringify(logger)).not.toContain(jwt);
+      expect(JSON.stringify(logger)).not.toContain('private-user');
+    },
+  );
+
+  it('keeps a raw throwing scope callback as an ordinary OIDC failure', async () => {
+    stubDiscoveryFetch();
+    const jwt = await mintToken({ scope: 'read' });
+    const verify = createOidcVerifier(ISSUER, AUDIENCE, {
+      expandScopes: () => {
+        throw new Error('callback failed');
+      },
+    });
+    const chain = createChainedTokenVerifier({ apiKeys: [{ key: jwt, scopes: ['admin'] }] }, undefined, verify);
+    expect((await chain(jwt)).scopes).toEqual(['admin']);
   });
 
   it('verifies a valid RS256 token and extracts the `scope` claim', async () => {

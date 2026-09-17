@@ -13,10 +13,10 @@
  */
 
 import crypto from 'node:crypto';
-import { types } from 'node:util';
 import { diagnosticError, diagnosticLogger } from './internal/diagnostic-logger.js';
 import type { AuthInfo } from './internal/sdk.js';
 import { InvalidTokenError } from './internal/sdk.js';
+import { assertAuthInfo, isMalformedAuthInfoError } from './internal/verifier-result.js';
 import type { Logger } from './logger.js';
 import type { ApiKeyEntry, ExpandScopes, Verifier } from './types.js';
 import { principalRejection } from './xsuaa-user-principal.js';
@@ -100,14 +100,16 @@ export function createApiKeyVerifier(
       if (timingSafeStringEqual(token, entry.key)) {
         const scopes = expandScopes(entry.scopes ?? []);
         const clientId = entry.clientId ?? 'api-key';
-        logger.debug('API key matched', { clientId });
-        return {
+        const result = {
           token,
           clientId,
           scopes,
           expiresAt: Math.floor(Date.now() / 1000) + ONE_YEAR_SECS,
           extra: {},
         };
+        assertAuthInfo(result, logger, 'API key');
+        logger.debug('API key matched', { clientId });
+        return result;
       }
     }
     throw new InvalidTokenError('API key validation failed: not a recognised key');
@@ -277,14 +279,17 @@ export function createOidcVerifier(
         fallbackScopes,
       );
 
-      return {
+      const result = {
         token,
         clientId: (payload.azp as string) ?? (payload.sub as string) ?? 'oidc-user',
         scopes,
         expiresAt: payload.exp,
         extra: { sub: payload.sub, iss: payload.iss },
       };
+      assertAuthInfo(result, logger, 'OIDC');
+      return result;
     } catch (err) {
+      if (isMalformedAuthInfoError(err)) throw err;
       // Wrap jose validation errors as InvalidTokenError so bearerAuth maps to 401.
       if (err instanceof InvalidTokenError) throw err;
       throw new InvalidTokenError((err as Error).message ?? 'Invalid token');
@@ -293,24 +298,6 @@ export function createOidcVerifier(
 }
 
 // ─── Chained verifier ────────────────────────────────────────────────
-
-/** Malformed token/scopes are terminal, never a reason to grant fallback access. */
-function assertAuthInfo(result: AuthInfo): void {
-  try {
-    if (
-      typeof result === 'object' &&
-      result !== null &&
-      !types.isProxy(result) &&
-      typeof result.token === 'string' &&
-      Array.isArray(result.scopes) &&
-      result.scopes.every((scope) => typeof scope === 'string')
-    )
-      return;
-  } catch {
-    // Normalize throwing core accessors; optional diagnostics are separate below.
-  }
-  throw new Error('Verifier returned malformed AuthInfo');
-}
 
 /**
  * Chain bearer verifiers in the SPEC-frozen order **XSUAA → OIDC → api-key**.
@@ -365,9 +352,19 @@ export function createChainedTokenVerifier(
       try {
         result = await verifier(token);
       } catch (err) {
+        if (isMalformedAuthInfoError(err)) {
+          logger.warn('Verifier integration failure', { method, reason: 'malformed_auth_info' });
+          throw err;
+        }
         // This token was authenticated by XSUAA but its principal was forbidden.
         // A second verifier must not turn that authorization failure into access.
-        const denial = principalRejection(err);
+        let denial: ReturnType<typeof principalRejection>;
+        try {
+          denial = principalRejection(err);
+        } catch (integrationError) {
+          logger.warn('Verifier integration failure', { method, reason: 'unsupported_error_representation' });
+          throw integrationError;
+        }
         if (denial) {
           logger.debug('Chained token verifier: principal rejected', { method, code: denial.code });
           throw denial;
@@ -377,7 +374,7 @@ export function createChainedTokenVerifier(
       }
       // Do not turn optional identity metadata into a new authorization gate:
       // SAP's clientId accessor can return null for valid multi-audience tokens.
-      assertAuthInfo(result);
+      assertAuthInfo(result, logger, method);
       logger.debug(`Chained token verifier: ${method} succeeded`, () => ({
         clientId: result.clientId,
         scopeCount: result.scopes.length,
@@ -393,6 +390,7 @@ export function createChainedTokenVerifier(
         logger.debug('Chained token verifier: API key matched', { clientId: result.clientId });
         return result;
       } catch (err) {
+        if (isMalformedAuthInfoError(err)) throw err; // Already logged by this chain's API-key verifier.
         logger.debug('Chained token verifier: API key failed', () => diagnosticError(err));
       }
     }

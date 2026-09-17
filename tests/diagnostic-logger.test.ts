@@ -1,9 +1,61 @@
 import { execFileSync } from 'node:child_process';
-import { describe, expect, it, vi } from 'vitest';
-import { diagnosticLogger } from '../src/internal/diagnostic-logger.js';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { diagnosticError, diagnosticLogger } from '../src/internal/diagnostic-logger.js';
 import { noopLogger } from '../src/logger.js';
 
 describe('best-effort verifier diagnostics', () => {
+  let compiledDir: string;
+  beforeAll(() => {
+    // Compile the actual sources, not a reimplementation or stale dist. Encoded
+    // path characters exercise the child import; no Node TS-stripping API needed.
+    compiledDir = mkdtempSync(join(tmpdir(), 'xsuaa logger % ü '));
+    const compiler = fileURLToPath(new URL('./bin/tsc', import.meta.resolve('typescript/package.json')));
+    execFileSync(
+      process.execPath,
+      [
+        compiler,
+        '--ignoreConfig',
+        '--module',
+        'commonjs',
+        '--target',
+        'ES2023',
+        '--types',
+        'node',
+        '--skipLibCheck',
+        '--rootDir',
+        fileURLToPath(new URL('../src/', import.meta.url)),
+        '--outDir',
+        compiledDir,
+        fileURLToPath(new URL('../src/internal/diagnostic-logger.ts', import.meta.url)),
+      ],
+      { cwd: fileURLToPath(new URL('../', import.meta.url)), timeout: 20_000, stdio: 'pipe' },
+    );
+  }, 25_000);
+  afterAll(() => {
+    if (compiledDir) rmSync(compiledDir, { recursive: true, force: true });
+  });
+  it.each(['TimeoutError', 'AbortError'])('retains native %s messages', (name) => {
+    expect(diagnosticError(new DOMException('operation interrupted', name))).toEqual({
+      error: 'operation interrupted',
+    });
+  });
+
+  it('does not execute arbitrary message getters or accept a spoofed DOMException', () => {
+    const getter = vi.fn(() => {
+      throw new Error('must not execute');
+    });
+    const error = Object.defineProperty(new Error(), 'message', { get: getter });
+    expect(diagnosticError(error)).toEqual({ error: 'Unknown verifier error' });
+    expect(diagnosticError(Object.create(DOMException.prototype))).toEqual({ error: 'Unknown verifier error' });
+    expect(diagnosticError(new Proxy(new DOMException('private'), { get: getter }))).toEqual({
+      error: 'Unknown verifier error',
+    });
+    expect(getter).not.toHaveBeenCalled();
+  });
   it.each(['debug', 'info', 'warn'] as const)('preserves argument count and receiver for %s', (level) => {
     const method = vi.fn();
     const sink = { ...noopLogger, [level]: method };
@@ -18,16 +70,9 @@ describe('best-effort verifier diagnostics', () => {
     'absorbs rejected promises and thenables from %s without an unhandled rejection',
     (level) => {
       // Run outside Vitest's rejection handler with Node's explicit strict policy.
-      // Strip the actual two source modules in memory; no stale dist or generated src files.
       const script = `
-        import { readFileSync } from 'node:fs';
-        import { stripTypeScriptTypes } from 'node:module';
-        import { runInNewContext } from 'node:vm';
-        const url = source => 'data:text/javascript;base64,' + Buffer.from(source).toString('base64');
-        const loggerUrl = url(stripTypeScriptTypes(readFileSync(${JSON.stringify(new URL('../src/logger.ts', import.meta.url).pathname)}, 'utf8')));
-        const source = stripTypeScriptTypes(readFileSync(${JSON.stringify(new URL('../src/internal/diagnostic-logger.ts', import.meta.url).pathname)}, 'utf8'))
-          .replace("'../logger.js'", JSON.stringify(loggerUrl));
-        const { diagnosticLogger } = await import(url(source));
+        const { runInNewContext } = require('node:vm');
+        const { diagnosticLogger } = require(${JSON.stringify(join(compiledDir, 'internal/diagnostic-logger.js'))});
         const sinks = [
           () => Promise.reject(new Error('native rejection')),
           () => runInNewContext("Promise.reject(new Error('foreign rejection'))"),
@@ -35,11 +80,10 @@ describe('best-effort verifier diagnostics', () => {
           () => ({ get then() { throw new Error('then getter'); } }),
         ];
         for (const sink of sinks) diagnosticLogger({ ${level}: sink }).${level}('verification diagnostic');
-        await new Promise(resolve => setTimeout(resolve, 20));
-        process.stdout.write('survived');
+        setTimeout(() => process.stdout.write('survived'), 20);
       `;
       expect(
-        execFileSync(process.execPath, ['--unhandled-rejections=strict', '--input-type=module', '--eval', script], {
+        execFileSync(process.execPath, ['--unhandled-rejections=strict', '--eval', script], {
           encoding: 'utf8',
           timeout: 10_000,
           stdio: ['ignore', 'pipe', 'pipe'],

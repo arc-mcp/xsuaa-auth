@@ -3,6 +3,7 @@ import { type Logger, noopLogger } from '../logger.js';
 
 type DiagnosticData = Record<string, unknown> | (() => Record<string, unknown>);
 type DiagnosticLogger = Record<'debug' | 'info' | 'warn', (message: string, data?: DiagnosticData) => void>;
+const domExceptionMessage = Object.getOwnPropertyDescriptor(DOMException.prototype, 'message')?.get;
 
 /** Do not coerce arbitrary exceptions or execute message/prototype getters. */
 export function diagnosticError(error: unknown): Record<string, unknown> {
@@ -11,6 +12,14 @@ export function diagnosticError(error: unknown): Record<string, unknown> {
     const message = Object.getOwnPropertyDescriptor(error, 'message');
     if (message && Object.hasOwn(message, 'value') && typeof message.value === 'string') {
       return { error: message.value };
+    }
+    try {
+      // Native brand check recovers fetch timeout/abort messages without calling
+      // an arbitrary error.message getter or traversing an untrusted prototype.
+      const message = domExceptionMessage?.call(error);
+      if (typeof message === 'string') return { error: message };
+    } catch {
+      // Not a native DOMException.
     }
   }
   return { error: 'Unknown verifier error' };

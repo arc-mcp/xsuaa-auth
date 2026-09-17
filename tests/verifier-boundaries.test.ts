@@ -5,18 +5,22 @@ import type { AuthInfo } from '../src/internal/sdk.js';
 import { requireBearerAuth } from '../src/internal/sdk.js';
 import { createChainedTokenVerifier } from '../src/verifiers.js';
 import { XsuaaUserTokenRequiredError } from '../src/xsuaa-user-principal.js';
+import { makeCapturingLogger } from './helpers/test-logger.js';
 
 const accepted: AuthInfo = { token: 'token', clientId: 'first', scopes: ['read'] };
 
 describe.each(['XSUAA', 'OIDC'])('verifier integration boundaries in %s slot', (slot) => {
   function chain(verifier: (token: string) => Promise<AuthInfo>) {
     const fallback = vi.fn().mockResolvedValue({ ...accepted, scopes: ['admin'] });
+    const logger = makeCapturingLogger();
     return {
       fallback,
+      logger,
       verify: createChainedTokenVerifier(
         { apiKeys: [{ key: 'token', scopes: ['admin'] }] },
         slot === 'XSUAA' ? verifier : undefined,
         slot === 'OIDC' ? verifier : fallback,
+        { logger },
       ),
     };
   }
@@ -33,11 +37,42 @@ describe.each(['XSUAA', 'OIDC'])('verifier integration boundaries in %s slot', (
     expect(fallback).not.toHaveBeenCalled();
   });
 
+  it('preserves a transparent Proxy result and its identity', async () => {
+    const result = new Proxy({ ...accepted, expiresAt: Date.now() / 1000 + 60 }, {});
+    const { verify, fallback } = chain(vi.fn().mockResolvedValue(result));
+    expect(await verify('token')).toBe(result);
+    const app = express();
+    app.get('/mcp', requireBearerAuth({ verifier: { verifyAccessToken: verify } }), (_req, res) => res.send('ok'));
+    expect((await request(app).get('/mcp').set('Authorization', 'Bearer token')).status).toBe(200);
+    expect(fallback).not.toHaveBeenCalled();
+  });
+
+  it('logs a throwing core-field Proxy as a terminal integration failure', async () => {
+    const result = new Proxy(accepted, {
+      get: (target, key) => {
+        if (key === 'scopes') throw new Error('private result');
+        return Reflect.get(target, key);
+      },
+    });
+    const { verify, fallback, logger } = chain(vi.fn().mockResolvedValue(result));
+    await expect(verify('token')).rejects.toThrow('Verifier returned malformed AuthInfo');
+    expect(logger.warns).toContainEqual({
+      message: 'Verifier integration failure',
+      data: { method: slot, reason: 'malformed_auth_info' },
+    });
+    expect(JSON.stringify(logger)).not.toContain('private result');
+    expect(fallback).not.toHaveBeenCalled();
+  });
+
   it.each([undefined, null, 'invalid', { ...accepted, scopes: undefined }, { ...accepted, scopes: [42] }])(
     'rejects malformed core AuthInfo terminally: %j',
     async (result) => {
-      const { verify, fallback } = chain(vi.fn().mockResolvedValue(result));
+      const { verify, fallback, logger } = chain(vi.fn().mockResolvedValue(result));
       await expect(verify('token')).rejects.toThrow('Verifier returned malformed AuthInfo');
+      expect(logger.warns).toContainEqual({
+        message: 'Verifier integration failure',
+        data: { method: slot, reason: 'malformed_auth_info' },
+      });
       expect(fallback).not.toHaveBeenCalled();
     },
   );
@@ -85,8 +120,12 @@ describe.each(['XSUAA', 'OIDC'])('verifier integration boundaries in %s slot', (
         );
       const proxy = form === 'fresh causes' ? freshCause() : revoked.proxy;
       const error = form === 'direct' ? proxy : new Error('wrapper', { cause: proxy });
-      const { verify, fallback } = chain(vi.fn().mockRejectedValue(error));
+      const { verify, fallback, logger } = chain(vi.fn().mockRejectedValue(error));
       await expect(verify('token')).rejects.toThrow('Verifier returned an unsupported error representation');
+      expect(logger.warns).toContainEqual({
+        message: 'Verifier integration failure',
+        data: { method: slot, reason: 'unsupported_error_representation' },
+      });
       expect(fallback).not.toHaveBeenCalled();
       expect(trap).not.toHaveBeenCalled();
       expect(reads).toBe(0);

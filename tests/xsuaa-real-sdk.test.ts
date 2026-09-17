@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createChainedTokenVerifier, createXsuaaTokenVerifier, XsuaaUserTokenRequiredError } from '../src/index.js';
 import { InvalidTokenError, requireBearerAuth } from '../src/internal/sdk.js';
 import * as attributes from '../src/xsuaa-user-attributes.js';
+import { expectMalformedVerifier, malformedScopes } from './helpers/malformed-verifier.js';
 import { makeCapturingLogger } from './helpers/test-logger.js';
 
 const CREDS = {
@@ -61,6 +62,37 @@ describe('new verifier options with real @sap/xssec 4.x validation', () => {
 
   const verifier = () =>
     createXsuaaTokenVerifier(CREDS, { userAttributeNames: ['arc1_targets'], requireUserToken: true });
+
+  it.each(malformedScopes)(
+    'rejects malformed XSUAA expanded scopes directly and in the chain: $label',
+    async ({ scopes }) => {
+      const jwt = await token();
+      const logger = makeCapturingLogger();
+      const verify = createXsuaaTokenVerifier(CREDS, { expandScopes: () => scopes as string[], logger });
+      const fallback = vi.fn().mockResolvedValue({ token: jwt, clientId: 'fallback', scopes: ['admin'] });
+      await expectMalformedVerifier(verify, jwt);
+      await expectMalformedVerifier(createChainedTokenVerifier({}, verify, fallback, { logger }), jwt);
+      expect(fallback).not.toHaveBeenCalled();
+      expect(logger.warns).toContainEqual({
+        message: 'Verifier integration failure',
+        data: { method: 'XSUAA', reason: 'malformed_auth_info' },
+      });
+      expect(JSON.stringify(logger)).not.toContain(jwt);
+      expect(JSON.stringify(logger)).not.toContain('A4H/001');
+    },
+  );
+
+  it('keeps a raw throwing scope callback as an ordinary XSUAA failure', async () => {
+    const jwt = await token();
+    const verify = createXsuaaTokenVerifier(CREDS, {
+      expandScopes: () => {
+        throw new Error('callback failed');
+      },
+    });
+    const fallback = vi.fn().mockResolvedValue({ token: jwt, clientId: 'fallback', scopes: ['read'] });
+    expect((await createChainedTokenVerifier({}, verify, fallback)(jwt)).scopes).toEqual(['read']);
+    expect(fallback).toHaveBeenCalledOnce();
+  });
 
   it.each(['authorization_code', 'refresh_token', 'urn:ietf:params:oauth:grant-type:jwt-bearer'])(
     'validates signed user fixture with %s grant',
