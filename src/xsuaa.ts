@@ -16,7 +16,7 @@
  */
 
 import xssec from '@sap/xssec';
-import { diagnosticLogger } from './internal/diagnostic-logger.js';
+import { diagnosticError, diagnosticLogger } from './internal/diagnostic-logger.js';
 import { type AuthInfo, InvalidTokenError } from './internal/sdk.js';
 import type { Logger } from './logger.js';
 import type { ExpandScopes, Verifier } from './types.js';
@@ -97,10 +97,12 @@ export function createXsuaaTokenVerifier(
     let securityContext: Awaited<ReturnType<typeof xsuaaService.createSecurityContext>>;
     try {
       securityContext = await xsuaaService.createSecurityContext(token, { jwt: token });
+      const payload = securityContext?.token?.payload;
+      if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+        throw new Error('Missing verified XSUAA payload');
+      }
     } catch (err) {
-      logger.debug('XSUAA token validation failed', {
-        error: err instanceof Error ? err.message : String(err),
-      });
+      logger.debug('XSUAA token validation failed', () => diagnosticError(err));
       throw new InvalidTokenError('XSUAA token validation failed');
     }
 
@@ -119,10 +121,11 @@ export function createXsuaaTokenVerifier(
     // The token carries scopes like "arc1-mcp!b12345.read"; checkLocalScope strips
     // the prefix, so we probe each accepted short name.
     const grantedScopes: string[] = [];
+    const hasOwnScope = Object.hasOwn(securityContext.token.payload, 'scope');
     for (const scope of acceptedScopes) {
       // xssec reads payload.scope through normal property lookup. Only an own
       // signed claim may supply local grants; continue using SAP's scope logic.
-      if (Object.hasOwn(securityContext.token.payload, 'scope') && securityContext.checkLocalScope(scope)) {
+      if (hasOwnScope && securityContext.checkLocalScope(scope)) {
         grantedScopes.push(scope);
       }
     }

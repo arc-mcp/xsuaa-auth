@@ -13,7 +13,8 @@
  */
 
 import crypto from 'node:crypto';
-import { diagnosticLogger } from './internal/diagnostic-logger.js';
+import { types } from 'node:util';
+import { diagnosticError, diagnosticLogger } from './internal/diagnostic-logger.js';
 import type { AuthInfo } from './internal/sdk.js';
 import { InvalidTokenError } from './internal/sdk.js';
 import type { Logger } from './logger.js';
@@ -145,13 +146,14 @@ function extractOidcScopes(
 ): string[] {
   let rawScopes: string[] | undefined;
 
-  const primary = payload[scopeClaim];
+  const primary = Object.hasOwn(payload, scopeClaim) ? payload[scopeClaim] : undefined;
+  const secondary = Object.hasOwn(payload, 'scp') ? payload.scp : undefined;
   if (typeof primary === 'string') {
     rawScopes = primary.split(' ').filter((s) => s.length > 0);
-  } else if (typeof payload.scp === 'string') {
-    rawScopes = payload.scp.split(' ').filter((s) => s.length > 0);
-  } else if (Array.isArray(payload.scp)) {
-    rawScopes = (payload.scp as unknown[]).filter((s): s is string => typeof s === 'string' && s.length > 0);
+  } else if (typeof secondary === 'string') {
+    rawScopes = secondary.split(' ').filter((s) => s.length > 0);
+  } else if (Array.isArray(secondary)) {
+    rawScopes = (secondary as unknown[]).filter((s): s is string => typeof s === 'string' && s.length > 0);
   }
 
   // No scope claims at all → fail closed to `fallbackScopes` (default []). The
@@ -292,6 +294,24 @@ export function createOidcVerifier(
 
 // ─── Chained verifier ────────────────────────────────────────────────
 
+/** Malformed token/scopes are terminal, never a reason to grant fallback access. */
+function assertAuthInfo(result: AuthInfo): void {
+  try {
+    if (
+      typeof result === 'object' &&
+      result !== null &&
+      !types.isProxy(result) &&
+      typeof result.token === 'string' &&
+      Array.isArray(result.scopes) &&
+      result.scopes.every((scope) => typeof scope === 'string')
+    )
+      return;
+  } catch {
+    // Normalize throwing core accessors; optional diagnostics are separate below.
+  }
+  throw new Error('Verifier returned malformed AuthInfo');
+}
+
 /**
  * Chain bearer verifiers in the SPEC-frozen order **XSUAA → OIDC → api-key**.
  *
@@ -300,6 +320,8 @@ export function createOidcVerifier(
  * principal rejected by requireUserToken throws XsuaaUserTokenRequiredError
  * immediately, even if wrapped in an own Error.cause or composed in the OIDC
  * slot; it must not fall through to another method.
+ * Malformed core AuthInfo and opaque Proxy exception/cause values are terminal
+ * integration errors. Optional diagnostic metadata does not select fallback.
  *
  * **`expandScopes` is applied exactly once — by the sub-verifiers, NOT here.** The
  * XSUAA/OIDC/api-key verifiers each expand the scopes they extract; the chain
@@ -333,49 +355,35 @@ export function createChainedTokenVerifier(
     const fp = tokenFingerprint(token);
     logger.debug('Chained token verifier: starting', fp);
 
-    // 1. XSUAA — expandScopes already applied inside the verifier.
-    if (xsuaaVerifier) {
+    // 1–2. XSUAA then OIDC — expandScopes already applied by each verifier.
+    for (const [method, verifier] of [
+      ['XSUAA', xsuaaVerifier],
+      ['OIDC', oidcVerifier],
+    ] as const) {
+      if (!verifier) continue;
+      let result: AuthInfo;
       try {
-        const result = await xsuaaVerifier(token);
-        logger.debug('Chained token verifier: XSUAA succeeded', {
-          clientId: result.clientId,
-          scopeCount: result.scopes.length,
-          hasUser: !!(result.extra?.email || result.extra?.userName),
-        });
-        return result;
+        result = await verifier(token);
       } catch (err) {
         // This token was authenticated by XSUAA but its principal was forbidden.
         // A second verifier must not turn that authorization failure into access.
         const denial = principalRejection(err);
         if (denial) {
-          logger.debug('Chained token verifier: principal rejected', { method: 'XSUAA', code: denial.code });
+          logger.debug('Chained token verifier: principal rejected', { method, code: denial.code });
           throw denial;
         }
-        logger.debug('Chained token verifier: XSUAA failed, trying next', {
-          error: err instanceof Error ? err.message : String(err),
-        });
+        logger.debug(`Chained token verifier: ${method} failed, trying next`, () => diagnosticError(err));
+        continue;
       }
-    }
-
-    // 2. OIDC — expandScopes already applied inside the verifier.
-    if (oidcVerifier) {
-      try {
-        const result = await oidcVerifier(token);
-        logger.debug('Chained token verifier: OIDC succeeded', {
-          clientId: result.clientId,
-          scopeCount: result.scopes.length,
-        });
-        return result;
-      } catch (err) {
-        const denial = principalRejection(err);
-        if (denial) {
-          logger.debug('Chained token verifier: principal rejected', { method: 'OIDC', code: denial.code });
-          throw denial;
-        }
-        logger.debug('Chained token verifier: OIDC failed, trying next', {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
+      // Do not turn optional identity metadata into a new authorization gate:
+      // SAP's clientId accessor can return null for valid multi-audience tokens.
+      assertAuthInfo(result);
+      logger.debug(`Chained token verifier: ${method} succeeded`, () => ({
+        clientId: result.clientId,
+        scopeCount: result.scopes.length,
+        ...(method === 'XSUAA' ? { hasUser: !!(result.extra?.email || result.extra?.userName) } : {}),
+      }));
+      return result;
     }
 
     // 3. API key — expandScopes already applied inside the verifier.
@@ -385,9 +393,7 @@ export function createChainedTokenVerifier(
         logger.debug('Chained token verifier: API key matched', { clientId: result.clientId });
         return result;
       } catch (err) {
-        logger.debug('Chained token verifier: API key failed', {
-          error: err instanceof Error ? err.message : String(err),
-        });
+        logger.debug('Chained token verifier: API key failed', () => diagnosticError(err));
       }
     }
 

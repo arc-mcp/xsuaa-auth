@@ -205,6 +205,30 @@ describe('createOidcVerifier', () => {
     expect(info.scopes).toContain('admin');
   });
 
+  it.each([
+    { claim: 'scope', value: 'admin' },
+    { claim: 'scp', value: 'admin' },
+    { claim: 'scp', value: ['admin'] },
+    { claim: 'custom_scope', value: 'admin' },
+  ])('ignores inherited $claim claims while retaining own claims and explicit fallback', async ({ claim, value }) => {
+    stubDiscoveryFetch();
+    const absent = await mintToken({ sub: 'user' });
+    const primary = claim === 'custom_scope' ? claim : 'scope';
+    const ownPrimary = await mintToken({ [primary]: 'read', scp: ['sql'] });
+    const ownSecondary = await mintToken({ scp: ['data'] });
+    const check = createOidcVerifier(ISSUER, AUDIENCE, { scopeClaim: primary });
+    const withFallback = createOidcVerifier(ISSUER, AUDIENCE, { scopeClaim: primary, fallbackScopes: ['read'] });
+    Object.defineProperty(Object.prototype, claim, { value, configurable: true });
+    try {
+      expect((await check(absent)).scopes).toEqual([]);
+      expect((await withFallback(absent)).scopes).toEqual(['read']);
+      expect((await check(ownPrimary)).scopes).toEqual(['read']);
+      expect((await check(ownSecondary)).scopes).toEqual(['data']);
+    } finally {
+      Reflect.deleteProperty(Object.prototype, claim);
+    }
+  });
+
   it('rejects an alg:none token (unsigned) — alg pinning', async () => {
     stubDiscoveryFetch();
     // Hand-craft an unsigned JWT (header alg:none, empty signature).

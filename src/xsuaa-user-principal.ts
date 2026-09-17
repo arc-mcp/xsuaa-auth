@@ -1,17 +1,20 @@
+import { types } from 'node:util';
 import { InsufficientScopeError } from './internal/sdk.js';
 
 export const XSUAA_USER_TOKEN_REQUIRED = 'XSUAA_USER_TOKEN_REQUIRED';
+const localPrincipalErrors = new WeakSet<object>();
 
 /** A validated token does not carry a supported XSUAA user principal. */
 export class XsuaaUserTokenRequiredError extends InsufficientScopeError {
   // Keep the SDK's HTTP 403 mapping without advertising a scope escalation that
   // cannot change a machine principal into a user. `forbidden` is our wire code.
   static override errorCode = 'forbidden';
-  readonly code = XSUAA_USER_TOKEN_REQUIRED;
+  readonly code: typeof XSUAA_USER_TOKEN_REQUIRED = XSUAA_USER_TOKEN_REQUIRED;
 
   constructor() {
     super('A supported user principal is required');
     this.name = 'XsuaaUserTokenRequiredError';
+    localPrincipalErrors.add(this);
   }
 }
 
@@ -19,9 +22,16 @@ export class XsuaaUserTokenRequiredError extends InsufficientScopeError {
 export function principalRejection(error: unknown): XsuaaUserTokenRequiredError | undefined {
   const seen = new Set<object>();
   let current = error;
-  while (typeof current === 'object' && current !== null && !seen.has(current)) {
+  while (((typeof current === 'object' && current !== null) || typeof current === 'function') && !seen.has(current)) {
+    // Even own-property reflection can execute a Proxy trap, throw on a revoked
+    // Proxy, or manufacture an endless cause chain. This integration error is
+    // terminal, not a principal denial and not permission to try another verifier.
+    if (types.isProxy(current)) throw new Error('Verifier returned an unsupported error representation');
+    if (typeof current === 'function') return undefined;
     seen.add(current);
-    if (current instanceof XsuaaUserTokenRequiredError) return current;
+    // instanceof can traverse a Proxy prototype. Brand local errors without
+    // executing user-supplied prototype behavior; cross-copy codes are below.
+    if (localPrincipalErrors.has(current)) return current as XsuaaUserTokenRequiredError;
     const code = Object.getOwnPropertyDescriptor(current, 'code');
     if (code && Object.hasOwn(code, 'value') && code.value === XSUAA_USER_TOKEN_REQUIRED) {
       // Another package copy: retain the fixed local message and SDK identity.

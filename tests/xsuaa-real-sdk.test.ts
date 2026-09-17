@@ -34,7 +34,11 @@ describe('new verifier options with real @sap/xssec 4.x validation', () => {
 
   afterAll(() => fetchJwks.mockRestore());
 
-  async function token(payload: Record<string, unknown> = {}, signingKey?: CryptoKey) {
+  async function token(
+    payload: Record<string, unknown> = {},
+    signingKey?: CryptoKey,
+    audience: string | string[] = CREDS.xsappname,
+  ) {
     return new SignJWT({
       grant_type: 'authorization_code',
       origin: 'ias-test',
@@ -49,7 +53,7 @@ describe('new verifier options with real @sap/xssec 4.x validation', () => {
     })
       .setProtectedHeader({ alg: 'RS256', kid: 'pr677-verification-test' })
       .setIssuer(`${CREDS.url}/oauth/token`)
-      .setAudience(CREDS.xsappname)
+      .setAudience(audience)
       .setIssuedAt()
       .setExpirationTime(typeof payload.exp === 'number' ? payload.exp : '5m')
       .sign(signingKey ?? key);
@@ -100,6 +104,26 @@ describe('new verifier options with real @sap/xssec 4.x validation', () => {
   it('does not treat another app local scopes as this app scopes', async () => {
     const result = await verifier()(await token({ scope: ['other-app!t456.admin', 'other-app!t456.read'] }));
     expect(result.scopes).toEqual([]);
+  });
+
+  it.each([false, true])('preserves SAP multi-audience null client IDs (user options=%s)', async (enabled) => {
+    const check = enabled ? verifier() : createXsuaaTokenVerifier(CREDS);
+    const jwt = await token({}, undefined, [CREDS.xsappname, 'uaa']);
+    const direct = await check(jwt);
+    expect(direct.clientId).toBeNull();
+    expect(direct.scopes).toEqual(['read']);
+    const oidc = vi.fn().mockResolvedValue({ token: jwt, clientId: 'other', scopes: ['admin'] });
+    const chain = createChainedTokenVerifier({}, check, oidc);
+    const chained = await chain(jwt);
+    expect(chained.clientId).toBeNull();
+    expect(chained.scopes).toEqual(['read']);
+    expect((await chain(await token())).clientId).toBe(CREDS.xsappname);
+    const app = express();
+    app.get('/mcp', requireBearerAuth({ verifier: { verifyAccessToken: chain } }), (_req, res) =>
+      res.json({ ok: true }),
+    );
+    expect((await request(app).get('/mcp').set('Authorization', `Bearer ${jwt}`)).status).toBe(200);
+    expect(oidc).not.toHaveBeenCalled();
   });
 
   it('rejects a validated client-credentials token even with forged-looking user hints and admin', async () => {
@@ -264,13 +288,21 @@ describe('new verifier options with real @sap/xssec 4.x validation', () => {
     }
   });
 
-  it.each(['creating security context', 'principal rejected', 'token verified'])(
-    'a throwing diagnostic logger cannot change principal enforcement at %s',
-    async (stage) => {
+  it.each(
+    ['creating security context', 'principal rejected', 'token verified'].flatMap((stage) =>
+      [false, true].map((asyncFailure) => ({ stage, asyncFailure })),
+    ),
+  )(
+    'a failing diagnostic logger cannot change principal enforcement at $stage (async=$asyncFailure)',
+    async ({ stage, asyncFailure }) => {
       const logger = {
         ...makeCapturingLogger(),
         debug: vi.fn((message: string) => {
-          if (message.includes(stage)) throw new Error('diagnostic sink unavailable');
+          if (message.includes(stage)) {
+            const error = new Error('diagnostic sink unavailable');
+            if (asyncFailure) return Promise.reject(error);
+            throw error;
+          }
         }),
       };
       const check = createXsuaaTokenVerifier(CREDS, { requireUserToken: true, logger });

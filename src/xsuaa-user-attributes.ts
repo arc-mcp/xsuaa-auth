@@ -1,11 +1,13 @@
 /** Bounded extraction from an already validated SAP XSUAA security context. */
 
 export type XsuaaUserAttributeStatus = 'valid' | 'missing' | 'invalid' | 'limit_exceeded';
-/** Sparse dictionaries have no Object.prototype methods. Use Object.hasOwn(). */
-// Widen Object members to non-callable unknown without making ordinary sparse
-// dictionary fixtures unassignable (optional-never members reject even {}).
-// biome-ignore lint/complexity/noBannedTypes: enumerate Object's methods, not arbitrary object values
-type NullPrototypeRecord<Value> = Record<string, Value | undefined> & { [K in keyof Object]?: unknown };
+/** Sparse dictionaries have no Object.prototype methods at runtime. Use Object.hasOwn(). */
+// Retain ordinary Record/literal assignability and typed entries/values while
+// making Object methods unsafe to call without a guard (null-prototype branch).
+type NullPrototypeRecord<Value> =
+  | Record<string, Value | undefined>
+  // biome-ignore lint/complexity/noBannedTypes: enumerate Object's methods, not arbitrary object values
+  | (Record<string, Value | undefined> & { [K in keyof Object]?: never });
 export type XsuaaUserAttributes = Readonly<NullPrototypeRecord<readonly string[]>>;
 export type XsuaaUserAttributeStatuses = Readonly<NullPrototypeRecord<XsuaaUserAttributeStatus>>;
 

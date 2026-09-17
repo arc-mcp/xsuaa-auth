@@ -250,6 +250,21 @@ describe('createXsuaaTokenVerifier (@sap/xssec mocked)', () => {
     expect(info.expiresAt).toBeUndefined();
   });
 
+  it.each([undefined, null, {}, { payload: null }, { payload: [] }])(
+    'normalizes a malformed SDK test double without inventing scope grants: %j',
+    async (token) => {
+      const context = await createSecurityContextMock();
+      const checkLocalScope = vi.fn(() => true);
+      createSecurityContextMock.mockResolvedValueOnce({
+        ...context,
+        checkLocalScope,
+        token,
+      } as unknown as typeof context);
+      await expect(createXsuaaTokenVerifier(CREDS)('jwt')).rejects.toBeInstanceOf(InvalidTokenError);
+      expect(checkLocalScope).not.toHaveBeenCalled();
+    },
+  );
+
   // ── M2: configurable acceptedScopes ──
   it('collects a non-arc-1 scope (e.g. "Viewer") when acceptedScopes is set to it', async () => {
     securityContextState.scopes = new Set(['Viewer']);
