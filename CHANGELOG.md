@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/arc-mcp/xsuaa-auth/compare/v1.0.2...v1.1.0) (2026-09-17)
+
+
+### Features
+
+* add verified XSUAA user attributes and principal enforcement ([#70](https://github.com/arc-mcp/xsuaa-auth/issues/70)) ([f2042c1](https://github.com/arc-mcp/xsuaa-auth/commit/f2042c1952f2cb649fe9fc13935fa137bf109c7d))
+
 ## [1.0.2](https://github.com/arc-mcp/xsuaa-auth/compare/v1.0.1...v1.0.2) (2026-08-10)
 
 
