@@ -154,8 +154,10 @@ scope named `user_attributes` to activate this feature.
 **401**. A custom adapter can instead map its stable `XSUAA_USER_TOKEN_REQUIRED` code to a generic
 403. A machine principal cannot satisfy this policy by requesting more scopes. Do not parse error
 messages or retry another authentication method after this terminal error; the package's chain
-preserves it in either JWT verifier slot, including own `Error.cause` wrappers and errors from
-separately loaded package copies. Ordinary missing-scope challenges remain `insufficient_scope`.
+preserves the terminal decision in either JWT verifier slot. It unwraps own `Error.cause` wrappers
+and normalizes errors from separately loaded package copies to the fixed local error. Ordinary
+missing-scope challenges remain `insufficient_scope`. The tested TypeScript SDK clients do not
+retry OAuth on `forbidden`; other MCP clients may recover on any 403 and need separate validation.
 
 The chain still tries other verifiers after an ordinary validation/JWKS failure. Do not configure
 an alternative verifier that accepts the same XSUAA tokens with a weaker principal policy. For a

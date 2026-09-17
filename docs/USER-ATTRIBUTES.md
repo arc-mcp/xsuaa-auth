@@ -14,9 +14,12 @@ After successful `@sap/xssec` verification, the allowlisted values appear in
 `AuthInfo.extra.xsuaaUserAttributeStatus` record. These records and value arrays are readonly
 and frozen; the source token arrays are never retained as the returned arrays.
 Both records have a null prototype and sparse string keys. Their types include `undefined` for
-absent names and exclude Object.prototype methods: use optional access (for example,
+absent names and do not guarantee Object.prototype methods: use optional access (for example,
 `attributes.arc1_targets?.includes('A4H/100')`) and `Object.hasOwn(record, name)`, not
-`record.hasOwnProperty(name)`. The enclosing SDK `AuthInfo.extra` object is not promised to be frozen.
+`record.hasOwnProperty(name)`. `Object.entries()` and `Object.values()` retain the sparse value
+types without casts, including readonly arrays. Ordinary typed Records/literals remain assignable
+for consumer fixtures; this is not a static proof of their runtime prototype. The enclosing SDK
+`AuthInfo.extra` object is not promised to be frozen.
 
 | Status | Values record |
 |---|---|
@@ -77,16 +80,43 @@ scopes still produce `insufficient_scope`, and invalid tokens still produce 401.
 can use the stable `XSUAA_USER_TOKEN_REQUIRED` code to return their own generic 403. Extra scope
 consent cannot convert a machine principal into a user. Only the fixed denial code and, in the
 chain, the verifier method are logged; no token, attributes or user identifiers are added.
-Verifier diagnostic logging is best effort: a synchronously throwing debug/info/warn sink cannot
-replace the authentication decision. This does not change audit delivery or suppress audit failures.
+Verifier debug/info/warn logging is best effort: synchronous sink throws and returned rejected
+Promises/thenables are consumed without awaiting delivery. Optional chain diagnostic fields are
+evaluated inside the same boundary, and exception messages are not read through getters or unsafe
+string coercion. This does not change audit delivery, suppress audit failures, or supervise work
+that a logger starts without returning its Promise. A logger that blocks synchronously is still
+consumer code, not an isolated worker.
+
+The no-OAuth-retry regression is established for the tested TypeScript MCP SDK client versions,
+not every MCP implementation. Source inspection of Inspector and VS Code shows recovery on
+403 independently of this error code; changing/removing challenge headers alone is not a proven
+remedy. Test the customer's installed client before claiming retry suppression. Native middleware
+still needs no custom adapter to return the correct 403 principal denial.
 
 The chained verifier never falls through after this failure from either JWT slot. It also
 recognizes the stable own data code from another installed copy of this package and follows own
 data `Error.cause` wrappers, normalizing to the local SDK-compatible error without copying an
-arbitrary provider message. It does not execute code/cause getters or use inherited fields;
-cycles stop without hanging. This code is read from a **verifier exception**, never a token claim
+arbitrary provider message. A locally constructed denial retains its identity when unwrapped;
+cross-copy errors retain the decision, not the original object identity. It does not execute
+code/cause getters or use inherited fields; ordinary cause cycles stop without hanging. A Proxy
+exception or Proxy cause (including revoked/callable Proxies) is not inspected: the chain throws
+a fixed integration error, which native middleware maps to a generic 500, without trying another
+verifier. This avoids executing arbitrary traps or following a fabricated infinite cause chain;
+it does not misclassify an opaque error as an authenticated principal denial. This code is read
+from a **verifier exception**, never a token claim
 or request parameter. Generic scope errors retain the existing OR-composition behavior; do not
 use those errors to express this terminal principal policy.
+
+A resolved JWT verifier must return a `token` string and string-array `scopes`. Malformed
+results terminate with an integration error rather than
+selecting fallback. Valid results retain their identity; optional diagnostic metadata cannot
+turn a successful verification into another authentication method. SDK test doubles must include
+the verified `token.payload` and their own `scope` claim: a missing/malformed payload is normalized
+to `InvalidTokenError`, and a scope-less payload never inherits grants from `checkLocalScope()`.
+Actual SAP SDK contexts already contain this payload. OIDC extraction likewise accepts only own
+primary/`scp` scope claims, retaining its documented precedence and explicit `fallbackScopes`.
+The chain does not add a non-null client-ID requirement: SAP can return `null` for valid
+multi-audience tokens without `azp`. Metadata remains SAP-owned and is not a target grant.
 
 Attribute-only mode intentionally retains machine authentication compatibility: `missing` is
 an extraction status, not proof that the principal is a user. Consumers that need user-only
@@ -184,3 +214,5 @@ The [PR #70 review disposition](reviews/2026-09-16-pr70-claude-review.md) separa
 corrections, compatibility decisions and outstanding live proof.
 The [follow-up review](reviews/2026-09-16-pr70-follow-up-review.md) records further corrections
 to transport retries, verifier composition, diagnostic failures and TypeScript consumer compatibility.
+The [third review](reviews/2026-09-17-pr70-third-review.md) records asynchronous diagnostics,
+integration-error handling, iteration types, and the client-specific retry evidence limit.

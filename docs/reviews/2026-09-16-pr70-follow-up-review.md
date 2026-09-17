@@ -5,6 +5,11 @@ Starting revision: `fa8907a56900003361233a9e0a9c584c82eafbeb` in
 verification, not authority to change the security contract. This work changes the library
 candidate and its tests/docs only; no BTP/IAS/SAP configuration, release or deployment is changed.
 
+Follow-up clarification: the no-OAuth-retry observations below apply to the tested TypeScript
+SDK clients, not every MCP client. The [third review](2026-09-17-pr70-third-review.md) supersedes
+the dictionary intersection and extends synchronous-only diagnostic protection to returned
+Promise/thenable failures. Historical test counts below remain unchanged.
+
 ## Findings and decisions
 
 | # | Reported issue | Disposition |
@@ -50,7 +55,8 @@ checks and the existing sparse/frozen attribute contract remain covered.
    22.18.0 and 24.11.1. The same cases that reproduced the failures above now reject terminally,
    preserve independent fallback, or return the expected safe attributes/scopes. Native middleware
    still returns 200 for valid access, 401 for invalid tokens and an ordinary scope challenge for
-   insufficient scopes; forbidden principals do not start another OAuth flow.
+   insufficient scopes; the tested TypeScript SDK clients do not start another OAuth flow for
+   forbidden principals. Inspector/VS Code installed-client behavior was not tested here.
 3. **Peer matrix:** typecheck and all 374 tests passed with SDK/Express **1.18.2/5.0.1**,
    **1.25.3/5.0.1**, **1.28/5.2.1**, **1.29/5.2.1**, and the restored lockfile's
    **1.30.0/5.2.1**. The first floor run exposed two test assumptions about newer SDK diagnostics
