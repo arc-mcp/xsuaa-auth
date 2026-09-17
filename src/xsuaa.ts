@@ -16,11 +16,18 @@
  */
 
 import xssec from '@sap/xssec';
+import { diagnosticError, diagnosticLogger } from './internal/diagnostic-logger.js';
 import { type AuthInfo, InvalidTokenError } from './internal/sdk.js';
+import { assertAuthInfo } from './internal/verifier-result.js';
 import type { Logger } from './logger.js';
-import { noopLogger } from './logger.js';
 import type { ExpandScopes, Verifier } from './types.js';
 import { DEFAULT_ACCEPTED_SCOPES } from './verifiers.js';
+import { extractXsuaaUserAttributes, validateUserAttributeNames } from './xsuaa-user-attributes.js';
+import {
+  hasSupportedXsuaaUserPrincipal,
+  XSUAA_USER_TOKEN_REQUIRED,
+  XsuaaUserTokenRequiredError,
+} from './xsuaa-user-principal.js';
 
 // `@sap/xssec` is pure CommonJS (no ESM entry) → default-import + destructure
 // with esModuleInterop (SPEC §12, documented interop edge).
@@ -36,6 +43,16 @@ export interface XsuaaCredentials {
   xsappname: string;
   uaadomain: string;
   verificationkey?: string;
+}
+
+export interface XsuaaTokenVerifierOptions {
+  expandScopes?: ExpandScopes;
+  acceptedScopes?: string[];
+  logger?: Logger;
+  /** Allowlisted verified user attributes; omitted preserves the existing AuthInfo shape. */
+  userAttributeNames?: readonly string[];
+  /** Reject machine/unknown principals; the SDK bearer middleware maps the typed error to 403. */
+  requireUserToken?: boolean;
 }
 
 // ─── XSUAA Token Verifier ────────────────────────────────────────────
@@ -55,11 +72,16 @@ export interface XsuaaCredentials {
  */
 export function createXsuaaTokenVerifier(
   credentials: XsuaaCredentials,
-  options: { expandScopes?: ExpandScopes; acceptedScopes?: string[]; logger?: Logger } = {},
+  options: XsuaaTokenVerifierOptions = {},
 ): Verifier {
-  const logger = options.logger ?? noopLogger;
+  const logger = diagnosticLogger(options.logger);
   const expandScopes = options.expandScopes ?? ((s: string[]): string[] => s);
   const acceptedScopes = options.acceptedScopes ?? DEFAULT_ACCEPTED_SCOPES;
+  const userAttributeNames = validateUserAttributeNames(options.userAttributeNames);
+  if (options.requireUserToken !== undefined && typeof options.requireUserToken !== 'boolean') {
+    throw new TypeError('requireUserToken must be a boolean');
+  }
+  const requireUserToken = options.requireUserToken === true;
   const xsuaaService = new XsuaaService({
     clientid: credentials.clientid,
     clientsecret: credentials.clientsecret,
@@ -76,19 +98,35 @@ export function createXsuaaTokenVerifier(
     let securityContext: Awaited<ReturnType<typeof xsuaaService.createSecurityContext>>;
     try {
       securityContext = await xsuaaService.createSecurityContext(token, { jwt: token });
+      const payload = securityContext?.token?.payload;
+      if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+        throw new Error('Missing verified XSUAA payload');
+      }
     } catch (err) {
-      logger.debug('XSUAA token validation failed', {
-        error: err instanceof Error ? err.message : String(err),
-      });
+      logger.debug('XSUAA token validation failed', () => diagnosticError(err));
       throw new InvalidTokenError('XSUAA token validation failed');
     }
+
+    const userPrincipal =
+      requireUserToken || userAttributeNames !== undefined ? hasSupportedXsuaaUserPrincipal(securityContext) : false;
+    if (requireUserToken && !userPrincipal) {
+      logger.debug('XSUAA principal rejected', { code: XSUAA_USER_TOKEN_REQUIRED });
+      throw new XsuaaUserTokenRequiredError();
+    }
+    const userAttributes =
+      userAttributeNames === undefined
+        ? undefined
+        : extractXsuaaUserAttributes(securityContext, userAttributeNames, userPrincipal);
 
     // Extract scopes (remove xsappname prefix for local scope names).
     // The token carries scopes like "arc1-mcp!b12345.read"; checkLocalScope strips
     // the prefix, so we probe each accepted short name.
     const grantedScopes: string[] = [];
+    const hasOwnScope = Object.hasOwn(securityContext.token.payload, 'scope');
     for (const scope of acceptedScopes) {
-      if (securityContext.checkLocalScope(scope)) {
+      // xssec reads payload.scope through normal property lookup. Only an own
+      // signed claim may supply local grants; continue using SAP's scope logic.
+      if (hasOwnScope && securityContext.checkLocalScope(scope)) {
         grantedScopes.push(scope);
       }
     }
@@ -105,15 +143,17 @@ export function createXsuaaTokenVerifier(
       extra: {
         userName: securityContext.getLogonName?.() ?? undefined,
         email: securityContext.getEmail?.() ?? undefined,
+        ...userAttributes,
       },
     };
+    assertAuthInfo(authInfo, logger, 'XSUAA');
     // Don't log email / userName (PII) by default — log counts + boolean presence.
-    logger.debug('XSUAA token verified', {
+    logger.debug('XSUAA token verified', () => ({
       clientId: authInfo.clientId,
       scopeCount: expandedScopes.length,
       hasUserName: authInfo.extra.userName != null,
       hasEmail: authInfo.extra.email != null,
-    });
+    }));
     return authInfo;
   };
 }

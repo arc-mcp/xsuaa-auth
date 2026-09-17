@@ -13,11 +13,13 @@
  */
 
 import crypto from 'node:crypto';
+import { diagnosticError, diagnosticLogger } from './internal/diagnostic-logger.js';
 import type { AuthInfo } from './internal/sdk.js';
 import { InvalidTokenError } from './internal/sdk.js';
+import { assertAuthInfo, isMalformedAuthInfoError } from './internal/verifier-result.js';
 import type { Logger } from './logger.js';
-import { noopLogger } from './logger.js';
 import type { ApiKeyEntry, ExpandScopes, Verifier } from './types.js';
+import { principalRejection } from './xsuaa-user-principal.js';
 
 const IDENTITY: ExpandScopes = (s) => s;
 
@@ -89,7 +91,7 @@ export function createApiKeyVerifier(
   keys: string | ApiKeyEntry[],
   options: { expandScopes?: ExpandScopes; logger?: Logger } = {},
 ): Verifier {
-  const logger = options.logger ?? noopLogger;
+  const logger = diagnosticLogger(options.logger);
   const expandScopes = options.expandScopes ?? IDENTITY;
   const entries = normalizeApiKeys(keys);
 
@@ -98,14 +100,16 @@ export function createApiKeyVerifier(
       if (timingSafeStringEqual(token, entry.key)) {
         const scopes = expandScopes(entry.scopes ?? []);
         const clientId = entry.clientId ?? 'api-key';
-        logger.debug('API key matched', { clientId });
-        return {
+        const result = {
           token,
           clientId,
           scopes,
           expiresAt: Math.floor(Date.now() / 1000) + ONE_YEAR_SECS,
           extra: {},
         };
+        assertAuthInfo(result, logger, 'API key');
+        logger.debug('API key matched', { clientId });
+        return result;
       }
     }
     throw new InvalidTokenError('API key validation failed: not a recognised key');
@@ -137,20 +141,21 @@ export function createApiKeyVerifier(
 function extractOidcScopes(
   payload: Record<string, unknown>,
   expandScopes: ExpandScopes,
-  logger: Logger,
+  logger: Pick<Logger, 'warn'>,
   scopeClaim = 'scope',
   acceptedScopes: string[] = DEFAULT_ACCEPTED_SCOPES,
   fallbackScopes: string[] = [],
 ): string[] {
   let rawScopes: string[] | undefined;
 
-  const primary = payload[scopeClaim];
+  const primary = Object.hasOwn(payload, scopeClaim) ? payload[scopeClaim] : undefined;
+  const secondary = Object.hasOwn(payload, 'scp') ? payload.scp : undefined;
   if (typeof primary === 'string') {
     rawScopes = primary.split(' ').filter((s) => s.length > 0);
-  } else if (typeof payload.scp === 'string') {
-    rawScopes = payload.scp.split(' ').filter((s) => s.length > 0);
-  } else if (Array.isArray(payload.scp)) {
-    rawScopes = (payload.scp as unknown[]).filter((s): s is string => typeof s === 'string' && s.length > 0);
+  } else if (typeof secondary === 'string') {
+    rawScopes = secondary.split(' ').filter((s) => s.length > 0);
+  } else if (Array.isArray(secondary)) {
+    rawScopes = (secondary as unknown[]).filter((s): s is string => typeof s === 'string' && s.length > 0);
   }
 
   // No scope claims at all → fail closed to `fallbackScopes` (default []). The
@@ -203,7 +208,7 @@ export function createOidcVerifier(
     logger?: Logger;
   } = {},
 ): Verifier {
-  const logger = options.logger ?? noopLogger;
+  const logger = diagnosticLogger(options.logger);
   const expandScopes = options.expandScopes ?? IDENTITY;
   const algorithms = options.algorithms ?? DEFAULT_OIDC_ALGORITHMS;
   const scopeClaim = options.scopeClaim ?? 'scope';
@@ -274,14 +279,17 @@ export function createOidcVerifier(
         fallbackScopes,
       );
 
-      return {
+      const result = {
         token,
         clientId: (payload.azp as string) ?? (payload.sub as string) ?? 'oidc-user',
         scopes,
         expiresAt: payload.exp,
         extra: { sub: payload.sub, iss: payload.iss },
       };
+      assertAuthInfo(result, logger, 'OIDC');
+      return result;
     } catch (err) {
+      if (isMalformedAuthInfoError(err)) throw err;
       // Wrap jose validation errors as InvalidTokenError so bearerAuth maps to 401.
       if (err instanceof InvalidTokenError) throw err;
       throw new InvalidTokenError((err as Error).message ?? 'Invalid token');
@@ -295,7 +303,12 @@ export function createOidcVerifier(
  * Chain bearer verifiers in the SPEC-frozen order **XSUAA → OIDC → api-key**.
  *
  * Each provided verifier is tried in turn; the first that resolves wins. If none
- * accept, throws {@link InvalidTokenError}.
+ * authenticate, throws {@link InvalidTokenError}. An authenticated XSUAA
+ * principal rejected by requireUserToken throws XsuaaUserTokenRequiredError
+ * immediately, even if wrapped in an own Error.cause or composed in the OIDC
+ * slot; it must not fall through to another method.
+ * Malformed core AuthInfo and opaque Proxy exception/cause values are terminal
+ * integration errors. Optional diagnostic metadata does not select fallback.
  *
  * **`expandScopes` is applied exactly once — by the sub-verifiers, NOT here.** The
  * XSUAA/OIDC/api-key verifiers each expand the scopes they extract; the chain
@@ -303,8 +316,9 @@ export function createOidcVerifier(
  * non-idempotent expander.) The chain only builds the api-key verifier with the
  * injected hook so the api-key path expands once too.
  *
- * The order is correctness-immaterial (token types are disjoint) but pinned for
- * determinism + test stability.
+ * Alternatives must not overlap XSUAA trust with a weaker principal policy.
+ * An XSUAA validation/JWKS failure still tries the other independently trusted
+ * methods; the chain cannot classify unverified claims as a forbidden principal.
  */
 export function createChainedTokenVerifier(
   config: { apiKeys?: string | ApiKeyEntry[] },
@@ -312,7 +326,7 @@ export function createChainedTokenVerifier(
   oidcVerifier?: Verifier,
   options: { expandScopes?: ExpandScopes; logger?: Logger } = {},
 ): Verifier {
-  const logger = options.logger ?? noopLogger;
+  const logger = diagnosticLogger(options.logger);
   const expandScopes = options.expandScopes ?? IDENTITY;
 
   const hasApiKeys =
@@ -320,7 +334,7 @@ export function createChainedTokenVerifier(
     (typeof config.apiKeys === 'string' ? config.apiKeys.length > 0 : config.apiKeys.length > 0);
   const apiKeyVerifier =
     hasApiKeys && config.apiKeys !== undefined
-      ? createApiKeyVerifier(config.apiKeys, { expandScopes, logger })
+      ? createApiKeyVerifier(config.apiKeys, { expandScopes, logger: options.logger })
       : undefined;
 
   return async (token: string): Promise<AuthInfo> => {
@@ -328,37 +342,45 @@ export function createChainedTokenVerifier(
     const fp = tokenFingerprint(token);
     logger.debug('Chained token verifier: starting', fp);
 
-    // 1. XSUAA — expandScopes already applied inside the verifier.
-    if (xsuaaVerifier) {
+    // 1–2. XSUAA then OIDC — expandScopes already applied by each verifier.
+    for (const [method, verifier] of [
+      ['XSUAA', xsuaaVerifier],
+      ['OIDC', oidcVerifier],
+    ] as const) {
+      if (!verifier) continue;
+      let result: AuthInfo;
       try {
-        const result = await xsuaaVerifier(token);
-        logger.debug('Chained token verifier: XSUAA succeeded', {
-          clientId: result.clientId,
-          scopeCount: result.scopes.length,
-          hasUser: !!(result.extra?.email || result.extra?.userName),
-        });
-        return result;
+        result = await verifier(token);
       } catch (err) {
-        logger.debug('Chained token verifier: XSUAA failed, trying next', {
-          error: err instanceof Error ? err.message : String(err),
-        });
+        if (isMalformedAuthInfoError(err)) {
+          logger.warn('Verifier integration failure', { method, reason: 'malformed_auth_info' });
+          throw err;
+        }
+        // This token was authenticated by XSUAA but its principal was forbidden.
+        // A second verifier must not turn that authorization failure into access.
+        let denial: ReturnType<typeof principalRejection>;
+        try {
+          denial = principalRejection(err);
+        } catch (integrationError) {
+          logger.warn('Verifier integration failure', { method, reason: 'unsupported_error_representation' });
+          throw integrationError;
+        }
+        if (denial) {
+          logger.debug('Chained token verifier: principal rejected', { method, code: denial.code });
+          throw denial;
+        }
+        logger.debug(`Chained token verifier: ${method} failed, trying next`, () => diagnosticError(err));
+        continue;
       }
-    }
-
-    // 2. OIDC — expandScopes already applied inside the verifier.
-    if (oidcVerifier) {
-      try {
-        const result = await oidcVerifier(token);
-        logger.debug('Chained token verifier: OIDC succeeded', {
-          clientId: result.clientId,
-          scopeCount: result.scopes.length,
-        });
-        return result;
-      } catch (err) {
-        logger.debug('Chained token verifier: OIDC failed, trying next', {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
+      // Do not turn optional identity metadata into a new authorization gate:
+      // SAP's clientId accessor can return null for valid multi-audience tokens.
+      assertAuthInfo(result, logger, method);
+      logger.debug(`Chained token verifier: ${method} succeeded`, () => ({
+        clientId: result.clientId,
+        scopeCount: result.scopes.length,
+        ...(method === 'XSUAA' ? { hasUser: !!(result.extra?.email || result.extra?.userName) } : {}),
+      }));
+      return result;
     }
 
     // 3. API key — expandScopes already applied inside the verifier.
@@ -368,9 +390,8 @@ export function createChainedTokenVerifier(
         logger.debug('Chained token verifier: API key matched', { clientId: result.clientId });
         return result;
       } catch (err) {
-        logger.debug('Chained token verifier: API key failed', {
-          error: err instanceof Error ? err.message : String(err),
-        });
+        if (isMalformedAuthInfoError(err)) throw err; // Already logged by this chain's API-key verifier.
+        logger.debug('Chained token verifier: API key failed', () => diagnosticError(err));
       }
     }
 

@@ -23,7 +23,7 @@ This spec freezes: scope, entrypoints, dependency ranges, the logger contract, e
 ## 2. Scope
 
 **IN (v1):**
-- **Core auth (`.`)** — MCP client→server authentication: XSUAA OAuth proxy provider, stateless RFC 7591 DCR client store, the `#214` OAuth-state callback codec, chained bearer verifier (**XSUAA → OIDC → api-key**, each optional; order frozen to match arc-1 — correctness-immaterial since token types are disjoint), and a thin `setupHttpAuth` facade.
+- **Core auth (`.`)** — MCP client→server authentication: XSUAA OAuth proxy provider, stateless RFC 7591 DCR client store, the `#214` OAuth-state callback codec, chained bearer verifier (**XSUAA → OIDC → api-key**, each optional; order frozen to match arc-1; validated principal denials are terminal), and a thin `setupHttpAuth` facade.
 - **Principal propagation (`./btp`)** — BTP destination lookup, per-user PP token exchange, and the Cloud Connector connectivity-proxy descriptor.
 
 **OUT (v1) — deliberately deferred or consumer-owned:**
@@ -171,8 +171,27 @@ export class XsuaaProxyOAuthProvider { /* extends the SDK ProxyOAuthServerProvid
 // 'Viewer') overrides it so its scopes aren't silently dropped. `expandScopes` is
 // applied EXACTLY once by each sub-verifier (the chain does NOT re-apply it).
 export function createXsuaaTokenVerifier(
-  credentials: XsuaaCredentials, options?: { expandScopes?: ExpandScopes; acceptedScopes?: string[]; logger?: Logger },
+  credentials: XsuaaCredentials, options?: XsuaaTokenVerifierOptions,
 ): Verifier;
+export interface XsuaaTokenVerifierOptions {
+  expandScopes?: ExpandScopes; acceptedScopes?: string[]; logger?: Logger;
+  userAttributeNames?: readonly string[]; requireUserToken?: boolean;
+}
+export type XsuaaUserAttributeStatus = 'valid' | 'missing' | 'invalid' | 'limit_exceeded';
+// Sparse, null-prototype records: absent keys are undefined; no instance Object methods.
+type NullPrototypeRecord<Value> =
+  | Record<string, Value | undefined>
+  | (Record<string, Value | undefined> & { [K in keyof Object]?: never });
+export type XsuaaUserAttributes = Readonly<NullPrototypeRecord<readonly string[]>>;
+export type XsuaaUserAttributeStatuses = Readonly<NullPrototypeRecord<XsuaaUserAttributeStatus>>;
+export interface XsuaaUserAttributeInfo {
+  readonly xsuaaUserAttributes: XsuaaUserAttributes;
+  readonly xsuaaUserAttributeStatus: XsuaaUserAttributeStatuses;
+}
+export class XsuaaUserTokenRequiredError extends InsufficientScopeError {
+  static errorCode: string; // 'forbidden', not a scope-escalation challenge
+  readonly code: 'XSUAA_USER_TOKEN_REQUIRED';
+}
 export function createOidcVerifier(   // lazy-imports jose
   issuer: string, audience: string,
   options?: { clockToleranceSec?: number; scopeClaim?: string; algorithms?: string[]; acceptedScopes?: string[]; fallbackScopes?: string[]; expandScopes?: ExpandScopes; logger?: Logger },
@@ -221,7 +240,8 @@ Notes:
 - **api-key profiles** are not a package concept: arc-1 maps its `API_KEY_PROFILES` → `ApiKeyEntry[]` (`{key, scopes}`) before passing.
 - The facade does **not** include arc-1's Copilot `/authorize` bypass or reverse-proxy base-path overrides — those stay in arc-1's `startHttpServer` using the building blocks.
 - When `options.xsuaa` is omitted (api-key/OIDC only), the facade builds the chained verifier and returns bearer middleware **without** mounting the OAuth router/callback — mirroring arc-1's non-XSUAA path (`createStandardVerifier`).
-- **Verifier chain order is frozen as `XSUAA → OIDC → api-key`** (matches arc-1). Correctness-immaterial (token types are disjoint — an api-key never validates as a JWT; an XSUAA JWT never validates against the OIDC issuer), but pinned for determinism + test stability. calmcp's PR adapts from its current api-key-first order (called out in its PR description).
+- **Verifier chain order is frozen as `XSUAA → OIDC → api-key`** (matches arc-1). The first accepted result wins; ordinary validation failures try the next independent method, and exhaustion throws `InvalidTokenError`. A validated principal denied by `requireUserToken` throws `XsuaaUserTokenRequiredError` immediately in either JWT slot; its stable own data code is also recognized across package copies and own data `Error.cause` wrappers, without executing getters. Ordinary cause cycles terminate safely. Proxy exception/cause values and malformed core JWT-verifier `AuthInfo` are terminal integration errors (generic 500 under native middleware), never fallback access. Do not overlap XSUAA/OIDC trust with a weaker principal policy. Use the XSUAA verifier directly on user-only XSUAA routes. Native SDK middleware maps principal denial to 403 (`forbidden`, not an `insufficient_scope` challenge) and invalid tokens to 401. No-OAuth-retry behavior is verified only for the tested TypeScript SDK clients, not all MCP clients. Generic scope errors retain the existing chain behavior. calmcp's PR adapts from its current api-key-first order (called out in its PR description).
+- **Verifier diagnostics** are best effort: synchronous debug/info/warn sink throws and returned Promise/thenable rejections are consumed, without awaiting delivery. Optional chain diagnostic projection is guarded and cannot select fallback. Core `AuthInfo` validity is checked separately from optional logging. This is not a new audit-delivery contract and does not supervise unreturned asynchronous work or synchronously blocking consumer code. Calls without data retain one argument and the logger receiver.
 - **CORS + COOP (browser / popup OAuth):** when `allowedOrigins` is set the facade applies a built-in exact-match CORS handler (`credentials:true` + MCP headers; no `cors` dep). The facade sets **no restrictive `Cross-Origin-Opener-Policy`** — popup OAuth (Copilot Studio, claude.ai) breaks under `COOP: same-origin`. Broad hardening (helmet CSP/HSTS) stays consumer-owned; a consumer adding helmet must disable COOP. arc-1 keeps its own `applySecurityMiddleware` via the building-block path.
 - **Redirect-URI validation is fail-closed (normative):** `validateRedirectUri` throws on malformed/disallowed input; `matchesRedirectPattern` returns `false` on parse failure. The DCR store's `redirectUriPatterns` MUST stay in sync with the XSUAA service's `xs-security.json` `oauth2-configuration.redirect-uris`.
 - **`emitAudit` is always null-guarded** (`logger.emitAudit?.(…)`); the package never assumes it exists.

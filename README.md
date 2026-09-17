@@ -126,6 +126,45 @@ Each verifier also accepts **`acceptedScopes`** (default the arc-1 set `['read',
 
 `createOidcVerifier` additionally accepts **`fallbackScopes`** (default `[]`, **fail closed**) — the scopes granted when a *verified* OIDC token carries no accepted scope (no `scope`/`scp` claim, or claims that match none of `acceptedScopes`). The empty default means an IdP misconfigured to drop scope claims grants **no** access rather than silently falling back to read-only. Opt into the legacy read-only behavior with `fallbackScopes: ['read']` (via the facade, `oidc.fallbackScopes`). It is not run through `expandScopes`.
 
+### Verified user attributes (optional building block)
+
+`createXsuaaTokenVerifier` accepts `userAttributeNames` and `requireUserToken` for applications
+that authorize individual user principals with XSUAA attributes. Omitting both options preserves
+the existing verifier behavior and `AuthInfo` shape. This is not enabled by `setupHttpAuth`.
+
+```ts
+const verify = createXsuaaTokenVerifier(credentials, {
+  userAttributeNames: ['arc1_targets'],
+  requireUserToken: true,
+});
+const authInfo = await verify(accessToken);
+// authInfo.extra.xsuaaUserAttributes: { arc1_targets: ['A4H/001', 'A4H/100'] }
+// authInfo.extra.xsuaaUserAttributeStatus: { arc1_targets: 'valid' }
+```
+
+Only allowlisted attributes from the successfully validated SAP security context are copied.
+The arrays and records are frozen; missing, malformed, and over-limit values carry distinct safe
+status codes. Target syntax and application policy stay in the consumer. Do not request an OAuth
+scope named `user_attributes` to activate this feature.
+
+`requireUserToken` rejects machine or unknown principals with the exported
+`XsuaaUserTokenRequiredError`. It extends the MCP SDK's `InsufficientScopeError`, so
+`requireBearerAuth` returns **403** with this package's `forbidden` wire code, not an
+`insufficient_scope` step-up challenge; ordinary `InvalidTokenError` remains
+**401**. A custom adapter can instead map its stable `XSUAA_USER_TOKEN_REQUIRED` code to a generic
+403. A machine principal cannot satisfy this policy by requesting more scopes. Do not parse error
+messages or retry another authentication method after this terminal error; the package's chain
+preserves the terminal decision in either JWT verifier slot. It unwraps own `Error.cause` wrappers
+and normalizes errors from separately loaded package copies to the fixed local error. Ordinary
+missing-scope challenges remain `insufficient_scope`. The tested TypeScript SDK clients do not
+retry OAuth on `forbidden`; other MCP clients may recover on any 403 and need separate validation.
+
+The chain still tries other verifiers after an ordinary validation/JWKS failure. Do not configure
+an alternative verifier that accepts the same XSUAA tokens with a weaker principal policy. For a
+user-only XSUAA route, use the configured XSUAA verifier directly. Attribute extraction alone is
+not proof of a user principal or application permission; enforce the required local scopes too.
+See [the attribute/principal contract and live-evidence gates](https://github.com/arc-mcp/xsuaa-auth/blob/main/docs/USER-ATTRIBUTES.md).
+
 ---
 
 ## `AuthOptions`
