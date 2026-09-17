@@ -1,5 +1,8 @@
 # PR #70: third Claude review, independently checked
 
+The [fourth-review follow-up](#fourth-review-follow-up) below supersedes the earlier result-boundary
+details and verification counts. The preceding round's evidence remains historical, not a new run.
+
 Starting revision: `885f5ae932f80e9076663ece4ddfba9691a2f0e8` in
 [PR #70](https://github.com/arc-mcp/xsuaa-auth/pull/70). This follow-up changes only the
 library candidate, tests and documentation. It does not release, merge, deploy, change IAM
@@ -114,3 +117,70 @@ broader proof. See the [current contract](../USER-ATTRIBUTES.md) and
   [MCP authentication recovery](https://github.com/microsoft/vscode/blob/d211d0584defa3fe9adce93b2ee971981162abeb/src/vs/workbench/api/common/extHostMcp.ts#L805).
   It handles 401/403 independently of this package's denial code. Header removal alone is not
   sufficient evidence of non-retry behavior; no custom adapter is added on that assumption.
+
+## Fourth-review follow-up
+
+Starting revision: `a4b4b5f`. The six new findings were checked independently against the actual
+library and native middleware, not accepted from the review labels alone.
+
+| Finding | Disposition |
+|---|---|
+| Silent terminal integration errors | Fixed. Emit a best-effort warning with method and fixed reason for malformed results and opaque thrown Proxy representations. No result, token, attributes or provider details are added. A logger must be configured; the default remains no-op. |
+| Eager XSUAA success diagnostics / inconsistent expansion results | Fixed at the shared result boundary. XSUAA, OIDC and API-key results all validate core token/scopes before returning, directly and when chained. Undefined, null, mixed and sparse scope arrays terminate with HTTP 500; they cannot select fallback. Raw exceptions thrown by the callback retain ordinary failure semantics. |
+| Transparent Proxy results rejected | Fixed for successful results with readable, valid core fields; preserve object identity and native HTTP 200. Throwing core reads fail terminally. Opaque **thrown errors/causes** remain unsupported, rather than fabricated principal denials. |
+| Native timeout messages lost | Fixed for native DOMException timeout/abort messages using the captured native brand-checked accessor. Arbitrary accessor-backed messages (including Zod's getter) remain intentionally unexecuted; this is not a general exception serializer. |
+| Stale SPEC record type | Fixed to match the implemented sparse-Record/null-prototype union. Existing consumer type fixtures remain in place. |
+| Logger child-process portability | Fixed. Compile the actual source with the installed compiler into a temporary path containing spaces, percent and Unicode; resolve URLs with fileURLToPath. No URL.pathname file access, import rewriting or Node stripTypeScriptTypes requirement remains. |
+
+The original paths were reproduced before production edits. The new regression matrix exercises
+each built-in directly and through the chain and native middleware. Existing default/opt-in,
+empty-scope, exactly-once expansion, nullable SAP client ID, principal denial, independent fallback,
+attribute bounds, immutable output and diagnostic-isolation controls remain. A fresh read-only
+candidate reviewer reported no concrete surviving bypass or regression.
+
+### Why the proposed wholesale deletion is not applied
+
+The claimed line savings remove documented behavior, not just duplication: bounded extraction,
+malformed-container distinctions, own-claim provenance, immutable results, sparse typing,
+cross-copy/wrapped principal denials and diagnostic isolation. Passing a reduced suite after
+discarding 84 existing expectations does not establish equivalent behavior. Node's default HTTP
+header cap is neither a direct-verifier boundary nor an immutable deployment limit. SAP's generic
+attribute getter does not preserve all of this library's extraction statuses.
+
+The claim that nothing links the dated reviews is also incorrect: USER-ATTRIBUTES.md links all
+three. They are retained as historical evidence; this section and the current contract state the
+latest behavior. No new SECURITY.md exclusion is used to waive a reproduced regression. This code
+still does not promise to sandbox compromised or arbitrarily stateful consumer JavaScript.
+
+The previously reported three surviving mutants remain unverified without their patches and
+reproduction commands. Raw logger calls in pre-existing OAuth callback/provider code are a separate
+follow-up, not covered by the verifier-specific diagnostic guarantee or expanded in this patch.
+
+### Merge versus release
+
+Final fourth-round verification, after restoring the committed dependency graph:
+
+- `npm run typecheck`, `npm run lint`, `npm run build`, `npm run check:exports` and
+  `git diff --check` pass. `npm audit --audit-level=high` reports zero vulnerabilities.
+  The existing Biome schema information notice remains.
+- `npm test`: **448 tests / 17 files**, passing on Node **22.18.0** and **24.11.1**.
+  All malformed-result triggers now terminate consistently; valid/default, terminal-principal,
+  independent fallback and nullable-client controls still pass.
+- Typecheck and all 448 tests pass with SDK/Express **1.18.2/5.0.1**, **1.25.3/5.0.1**,
+  **1.28.0/5.2.1**, **1.29.0/5.2.1**, and restored **1.30.0/5.2.1**. Temporary matrix installs
+  were undone with `npm ci`; manifest, lockfile and package version remain unchanged.
+- A separate built-output probe on **Node 22.0.0** passes strict rejection handling for all
+  three diagnostic levels, native/foreign Promises and thenables, plus native timeout formatting.
+  This is the targeted old-runtime check, not a claim that the full modern dev-toolchain ran on 22.0.0.
+- Earlier overlapping runs had non-reproducing timeout/socket errors and an unexpected HTTP 401;
+  these are not counted as passes. The old worktree then disappeared, so the recorded patches were
+  restored at the same base in a replacement worktree. A separate npm resolver error during an
+  extra Vitest pin was avoided by using the ordinary peer-matrix install. The final serial matrix
+  and restored-graph checks above passed without weakening assertions or raising test timeouts.
+
+This is an opt-in library change, not activation of ARC-1 target authorization. The code can be
+merged after current-head verification is green, without waiving the live release gates above.
+The release workflow publishes only when release-please creates a release, not on every feature
+merge. No package version, dependency manifest/lockfile, IAM configuration or deployment is changed
+here. Same-name human-application and origin/tenant isolation, revocation/recovery acceptance and
+actual customer-client behavior must not be claimed proven by synthetic tests.

@@ -179,7 +179,9 @@ export interface XsuaaTokenVerifierOptions {
 }
 export type XsuaaUserAttributeStatus = 'valid' | 'missing' | 'invalid' | 'limit_exceeded';
 // Sparse, null-prototype records: absent keys are undefined; no instance Object methods.
-type NullPrototypeRecord<Value> = Record<string, Value | undefined> & { [K in keyof Object]?: unknown };
+type NullPrototypeRecord<Value> =
+  | Record<string, Value | undefined>
+  | (Record<string, Value | undefined> & { [K in keyof Object]?: never });
 export type XsuaaUserAttributes = Readonly<NullPrototypeRecord<readonly string[]>>;
 export type XsuaaUserAttributeStatuses = Readonly<NullPrototypeRecord<XsuaaUserAttributeStatus>>;
 export interface XsuaaUserAttributeInfo {

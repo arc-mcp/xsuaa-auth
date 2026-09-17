@@ -82,8 +82,9 @@ consent cannot convert a machine principal into a user. Only the fixed denial co
 chain, the verifier method are logged; no token, attributes or user identifiers are added.
 Verifier debug/info/warn logging is best effort: synchronous sink throws and returned rejected
 Promises/thenables are consumed without awaiting delivery. Optional chain diagnostic fields are
-evaluated inside the same boundary, and exception messages are not read through getters or unsafe
-string coercion. This does not change audit delivery, suppress audit failures, or supervise work
+evaluated inside the same boundary. Exception formatting accepts own data messages and native
+`DOMException` timeout/abort messages through the native brand-checked accessor, never arbitrary
+message getters or unsafe string coercion. This does not change audit delivery, suppress audit failures, or supervise work
 that a logger starts without returning its Promise. A logger that blocks synchronously is still
 consumer code, not an isolated worker.
 
@@ -107,9 +108,16 @@ from a **verifier exception**, never a token claim
 or request parameter. Generic scope errors retain the existing OR-composition behavior; do not
 use those errors to express this terminal principal policy.
 
-A resolved JWT verifier must return a `token` string and string-array `scopes`. Malformed
-results terminate with an integration error rather than
-selecting fallback. Valid results retain their identity; optional diagnostic metadata cannot
+A resolved verifier must return a `token` string and string-array `scopes`. The built-in XSUAA,
+OIDC and API-key verifiers validate these fields after scope expansion, as does the JWT chain
+boundary. Malformed results terminate with an integration error (generic HTTP 500), never
+selecting fallback; a raw exception thrown by a scope callback retains ordinary failure/fallback
+semantics. Malformed-result and opaque-exception failures emit a best-effort warning containing
+only the verifier method and a fixed reason, not result/claim/provider details. Pass a logger to
+receive these warnings; the default is no-op. A composed verifier and its chain can each log the
+same failure at their own boundary.
+Valid results retain their identity, including transparent Proxy wrappers with readable core
+fields; opaque thrown Proxy errors remain the separate unsupported case above. Optional diagnostic metadata cannot
 turn a successful verification into another authentication method. SDK test doubles must include
 the verified `token.payload` and their own `scope` claim: a missing/malformed payload is normalized
 to `InvalidTokenError`, and a scope-less payload never inherits grants from `checkLocalScope()`.
