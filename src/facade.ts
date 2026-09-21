@@ -175,9 +175,10 @@ export function setupHttpAuth(
     // /authorize redirect_uri shim: auto-register a candidate redirect_uri for the
     // pre-registered XSUAA client (Manual-OAuth clients like Copilot Studio). The
     // SDK requires exact redirect_uri matching; `ensureRedirectUri` is pattern-gated
-    // (xs-security.json mirror) so only allowlisted URIs are added, then XSUAA stays
-    // the authoritative validator. Also merges query params into the body for clients
-    // that POST /authorize with params in the query string.
+    // (`redirectUriPatterns`) so only allowlisted URIs are added. Since the callback
+    // proxy this gate — not XSUAA — validates the client's redirect_uri. Also merges
+    // query params into the body for clients that POST /authorize with params in
+    // the query string.
     app.use('/authorize', (req, _res, next) => {
       if (
         req.method === 'POST' &&
