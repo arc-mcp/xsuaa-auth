@@ -10,8 +10,10 @@
 /**
  * Built-in redirect_uris for the pre-registered XSUAA client. These cover the
  * common MCP clients out of the box; additional URIs can be added at
- * `/authorize` time via `ensureRedirectUri()`. The list MUST also be registered
- * in `xs-security.json` — XSUAA is the authoritative validator for this client.
+ * `/authorize` time via `ensureRedirectUri()`. Since the `/oauth/callback`
+ * proxy (see {@link XSUAA_DEFAULT_REDIRECT_URI_PATTERNS}) XSUAA never sees these
+ * client URIs — this package validates them. They do not have to be registered
+ * in `xs-security.json`, and the custom-scheme entries cannot be.
  */
 export const XSUAA_DEFAULT_REDIRECT_URIS = [
   'http://localhost:6274/oauth/callback', // MCP Inspector
@@ -22,28 +24,38 @@ export const XSUAA_DEFAULT_REDIRECT_URIS = [
 ] as const;
 
 /**
- * Redirect-URI allowlist for the pre-registered XSUAA default client — a vendored
- * mirror of `oauth2-configuration.redirect-uris` in `xs-security.json`.
+ * Redirect-URI allowlist for the pre-registered XSUAA default client.
  *
- * ── Why this must be enforced (not just XSUAA) ──
+ * ── Why this layer is the authoritative validator ──
  * The issue-#214 callback proxy (see `oauth-state.ts`) sends XSUAA the proxy's OWN
- * `/oauth/callback` as the redirect_uri and carries the client's real
- * redirect_uri inside the signed state. XSUAA therefore no longer validates the
- * client's redirect_uri — this layer does. Without an allowlist, `ensureRedirectUri`
- * would auto-trust ANY redirect_uri supplied at `/authorize` for the shared
- * default client, letting an attacker steer a victim's authorization code to
- * their own URI (security audit 2026-06, follow-up to PR #352).
+ * `/oauth/callback` as the redirect_uri — at `/authorize` and again at the token
+ * exchange — and carries the client's real redirect_uri inside the signed state.
+ * XSUAA therefore never validates the client's redirect_uri; this list does.
+ * Without it, `ensureRedirectUri` would auto-trust ANY redirect_uri supplied at
+ * `/authorize` for the shared default client, letting an attacker steer a victim's
+ * authorization code to their own URI (security audit 2026-06, follow-up to PR #352).
+ *
+ * ── Relationship to `xs-security.json` ──
+ * This list is NOT a mirror of `oauth2-configuration.redirect-uris`, and cannot be:
+ * XSUAA rejects custom schemes such as `cursor://` and `vscode://` on
+ * `cf create-service` / `cf update-service` ("Malformed redirect URIs detected",
+ * arc-mcp/arc-1#812). The responsibilities are split:
+ *   - `xs-security.json` must allow what XSUAA itself receives: this server's own
+ *     `/oauth/callback` and `/oauth/logged-out` URLs (on Cloud Foundry typically
+ *     covered by `https://*.hana.ondemand.com/**`, or the app's custom domain).
+ *   - `redirectUriPatterns` (this list, or a consumer override) must allow the
+ *     client redirect URIs the deployment wants to accept, custom schemes included.
+ * Keep the pattern list as narrow as the deployment needs; a too-broad pattern
+ * weakens both the `/authorize` shim and the `/oauth/callback` check.
  *
  * ── Why vendored, not read from xs-security.json ──
  * `xs-security.json` is consumed by XSUAA at service-creation time and is NOT
  * shipped with the running app (excluded by `.cfignore`, the npm `files`
  * allowlist, and the Dockerfile), and the service binding does not expose the
- * patterns — so the app cannot read them at runtime. To prevent drift,
- * the consumer's xs-security.json must stay in sync with this list (or a custom
- * `redirectUriPatterns` passed to the store). Keep the two in sync when adding a
- * client.
+ * patterns — so the app could not read them at runtime even if they were the
+ * right source.
  *
- * Glob semantics (xs-security.json): `*` matches within a single host/path
+ * Glob semantics (same as xs-security.json): `*` matches within a single host/path
  * segment (never `/`), `**` matches across segments.
  */
 export const XSUAA_DEFAULT_REDIRECT_URI_PATTERNS = [
@@ -132,8 +144,9 @@ export function matchesRedirectPattern(
  * Allowed: `https://*`, `http://` to localhost / 127.0.0.1 / [::1], the known
  * MCP-client custom schemes (`claude:`, `cursor:`, `vscode:`, `vscode-insiders:`),
  * and any URI explicitly allowlisted by `patterns` (so a deployment that registers
- * an extra native-client scheme in its `redirectUriPatterns` / `xs-security.json`
- * can use it).
+ * an extra native-client scheme in its `redirectUriPatterns` can use it —
+ * `xs-security.json` cannot hold custom schemes, see
+ * {@link XSUAA_DEFAULT_REDIRECT_URI_PATTERNS}).
  *
  * Rejected: `javascript:`, `data:`, `file:`, `ftp:`, any `http://` to a
  * non-loopback host, and — fail-closed — ANY other unknown/custom scheme that is

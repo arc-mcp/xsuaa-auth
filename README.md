@@ -183,7 +183,7 @@ The facade's configuration object. All fields are optional except where noted.
 | `xsuaa.resourceName` | `string` | SDK default | `resource_name` in the protected-resource metadata. |
 | `xsuaa.scopesSupported` | `string[]` | — | Advertised in OAuth metadata. **Also threaded to the XSUAA + OIDC verifiers as `acceptedScopes`** — set it to your own scope names (e.g. `['Viewer']`) so non-arc-1 scopes aren't filtered out of verified tokens. |
 | `xsuaa.requiredScopes` | `string[]` | — | Enforced via the SDK's `requireBearerAuth({ requiredScopes })`. |
-| `xsuaa.redirectUriPatterns` | `readonly string[]` | `XSUAA_DEFAULT_REDIRECT_URI_PATTERNS` | Allowlist for the `/authorize` shim. **Must mirror** your `xs-security.json` `oauth2-configuration.redirect-uris`. |
+| `xsuaa.redirectUriPatterns` | `readonly string[]` | `XSUAA_DEFAULT_REDIRECT_URI_PATTERNS` | Allowlist for client redirect URIs (`/authorize` shim and `/oauth/callback`). **Authoritative** — since the callback proxy XSUAA only sees this server's own callback URL. Custom schemes (`cursor://`, `vscode://`) belong here only; XSUAA rejects them in `xs-security.json`. Keep it as narrow as your clients need. |
 | `xsuaa.defaultRedirectUris` | `readonly string[]` | `XSUAA_DEFAULT_REDIRECT_URIS` | Pre-registered URIs (Claude, Cursor, VS Code, MCP Inspector ship by default). |
 | `xsuaa.dcrTtlSeconds` | `number` | `2592000` (30d) | DCR `client_id` lifetime. `0` disables expiry (recommended for clients that don't auto-re-register on `invalid_client`). |
 | `xsuaa.stateTtlSeconds` | `number` | `600` | OAuth-state token lifetime. `0` disables expiry. |

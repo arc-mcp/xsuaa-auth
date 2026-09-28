@@ -63,8 +63,9 @@ if (process.env.VCAP_SERVICES) {
     appUrl: resolveAppUrl(process.env, { publicUrlEnvVar: 'PUBLIC_URL', port: 3000 }),
     clientIdPrefix: 'example-',
     resourceName: 'Example MCP Server',
-    // Keep these in sync with your xs-security.json oauth2-configuration.redirect-uris.
-    // The shipped defaults already cover Claude, Cursor, VS Code, MCP Inspector.
+    // `redirectUriPatterns` is the allowlist for your clients' redirect URIs (XSUAA only
+    // sees this server's own callback). The shipped defaults cover Claude, Cursor,
+    // VS Code and MCP Inspector; narrow them to the clients you actually serve.
   };
 }
 

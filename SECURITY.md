@@ -45,7 +45,7 @@ Confirmed vulnerabilities receive a [GitHub Security Advisory (GHSA)](https://gi
 - **SAP system or XSUAA service vulnerabilities.** This package is a client of XSUAA / the BTP Destination Service. Vulnerabilities in SAP BTP, XSUAA, the Cloud Connector, or the SAP backend itself belong to SAP — please report via [SAP's responsible-disclosure channel](https://www.sap.com/about/trust-center/security/incident-management.html).
 - **Vulnerabilities in the MCP SDK, Express, `jose`, `@sap/xssec`, or other dependencies** with no `@arc-mcp/xsuaa-auth`-specific exposure (i.e. the upstream advisory does not impact how this package uses the dependency). Please report upstream to the affected project; this package tracks affected upstream advisories via Dependabot.
 - **Theoretical vulnerabilities** without a concrete exploitation path against the package's documented usage. Design-hardening discussions are welcome in a regular GitHub issue, not the private advisory channel.
-- **Misconfiguration in a consuming application** — e.g. failing to set `redirectUriPatterns` in sync with the XSUAA `xs-security.json`, leaving `required: false` in production, or reusing the default `dcrSigningSecret`. The README documents the secure configuration; deployment hardening is the operator's responsibility.
+- **Misconfiguration in a consuming application** — e.g. setting an over-broad `redirectUriPatterns`, leaving `required: false` in production, or reusing the default `dcrSigningSecret`. The README documents the secure configuration; deployment hardening is the operator's responsibility.
 - **Issues in unsupported versions** (see Supported Versions above).
 
 ## Safe Harbor
@@ -62,7 +62,7 @@ We commit to:
 
 The package ships fail-closed defaults, but a few knobs are load-bearing for security and are documented in the [README](./README.md) and [`docs/SPEC.md`](./docs/SPEC.md):
 
-- **`redirectUriPatterns` / `defaultRedirectUris`** must stay in sync with the XSUAA service's `xs-security.json` `oauth2-configuration.redirect-uris`. The `/authorize` redirect-URI shim is pattern-gated; a too-broad pattern weakens it.
+- **`redirectUriPatterns` / `defaultRedirectUris`** are the authoritative allowlist for client redirect URIs. Since the `/oauth/callback` proxy XSUAA only validates this server's own callback URL, so `xs-security.json` does not back-stop them (and cannot hold custom schemes such as `cursor://`). The `/authorize` redirect-URI shim and the callback check are pattern-gated; a too-broad pattern weakens both. Keep the list as narrow as your clients need.
 - **`dcrSigningSecret`** stabilizes DCR `client_id`s across restarts and should be a dedicated ≥32-byte secret. Rotating it (or bumping `dcrKdfLabel` / `stateKdfLabel`) is the revocation knob for issued client_ids and OAuth-state tokens.
 - **`createOidcVerifier({ algorithms })`** defaults to `['RS256','ES256','PS256']` — an explicit allowlist that closes `alg:none` and algorithm-confusion. Do not widen it to include symmetric algorithms.
 - **`createOidcVerifier({ fallbackScopes })`** defaults to `[]` (**fail closed**). When a verified OIDC token carries no accepted scope — no `scope`/`scp` claim, or claims that match none of `acceptedScopes` — the verifier grants `fallbackScopes`. The empty default means an IdP misconfigured to drop scope claims grants **no** privileges instead of silently falling back to read-only access. Only set `fallbackScopes: ['read']` (or wider) if you deliberately want an unscoped-but-authenticated token to receive a baseline grant.

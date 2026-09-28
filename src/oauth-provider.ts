@@ -342,7 +342,7 @@ export interface CreateXsuaaOAuthProviderOptions {
    * `credentials.clientsecret` (legacy behavior).
    */
   dcrSigningSecret?: string;
-  /** Redirect-URI allowlist (xs-security.json mirror) for the default client. */
+  /** Redirect-URI allowlist for the default client (see `redirect-uris.ts`; not a mirror of `xs-security.json`). */
   redirectUriPatterns?: readonly string[];
   /** Built-in redirect_uris baked into the pre-registered default client. */
   defaultRedirectUris?: readonly string[];
