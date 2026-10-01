@@ -22,6 +22,7 @@
  * (issue #214 callback proxy — XSUAA echoes a literal `+` in `state`).
  */
 
+import type { CimdResolverOptions } from './cimd-resolver.js';
 import { StatelessDcrClientStore } from './dcr-client-store.js';
 import type { OAuthClientInformationFull } from './internal/sdk.js';
 import { ProxyOAuthServerProvider } from './internal/sdk.js';
@@ -354,6 +355,11 @@ export interface CreateXsuaaOAuthProviderOptions {
    * `${appUrl}/oauth/callback`.
    */
   callbackUrl?: string;
+  /**
+   * Enable Client ID Metadata Document identities (CIMD, SEP-991) alongside DCR.
+   * Omitted means OFF. See {@link StatelessDcrClientStoreOptions.cimd}.
+   */
+  cimd?: CimdResolverOptions;
   /** Injected structural logger. Default: silent no-op. */
   logger?: Logger;
 }
@@ -407,6 +413,7 @@ export function createXsuaaOAuthProvider(
     ttlSeconds: options.dcrTtlSeconds,
     redirectUriPatterns: options.redirectUriPatterns,
     defaultRedirectUris: options.defaultRedirectUris,
+    ...(options.cimd ? { cimd: options.cimd } : {}),
     logger,
   });
   // The provider's own verifyAccessToken (used for the OAuth /token introspection

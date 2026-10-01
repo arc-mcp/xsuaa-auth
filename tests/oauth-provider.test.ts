@@ -97,6 +97,28 @@ describe('createXsuaaOAuthProvider', () => {
     expect(result.stateCodec).toBeDefined();
   });
 
+  it('threads the CIMD option through to the client store, and omits it by default', async () => {
+    // A silently dropped spread here would leave CIMD inert while every other test and
+    // the published metadata still looked correct, so pin the wiring rather than the shape.
+    const withoutCimd = createXsuaaOAuthProvider(STUB_XSUAA_CREDS, 'https://arc1.example.com');
+    expect(await withoutCimd.clientStore.getClient('https://client.example.com/m.json')).toBeUndefined();
+
+    const withCimd = createXsuaaOAuthProvider(STUB_XSUAA_CREDS, 'https://arc1.example.com', {
+      cimd: { allowedHosts: ['nothing.example.test'] },
+    });
+    // Enabled: the URL client_id now reaches the resolver, which refuses it on the host
+    // allowlist. Under the default (no `cimd`) it never got that far — both return
+    // undefined, so the observable difference is that the allowlist was consulted at all.
+    const logger = makeCapturingLogger();
+    const gated = createXsuaaOAuthProvider(STUB_XSUAA_CREDS, 'https://arc1.example.com', {
+      cimd: { allowedHosts: ['nothing.example.test'] },
+      logger,
+    });
+    expect(await gated.clientStore.getClient('https://client.example.com/m.json')).toBeUndefined();
+    expect(logger.audit.some((e) => e.event === 'oauth_cimd_rejected' && e.reason === 'host_not_allowed')).toBe(true);
+    expect(withCimd.clientStore).toBeDefined();
+  });
+
   it('defaults to dcrSigningSource: "xsuaa" when dcrSigningSecret is omitted', () => {
     const logger = makeCapturingLogger();
     createXsuaaOAuthProvider(STUB_XSUAA_CREDS, 'https://arc1.example.com', { logger });
