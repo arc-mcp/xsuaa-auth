@@ -12,6 +12,11 @@ on:
 permissions:
   contents: read
 
+# Dependencies do not need lifecycle scripts to build or test this package.
+# Explicit npm run/test commands still execute; implicit pre/post hooks do not.
+env:
+  NPM_CONFIG_IGNORE_SCRIPTS: 'true'
+
 jobs:
   # Primary gate: lint, typecheck, test, build, and the publint/attw export
   # check, on every supported Node line. This is what a PR must pass.
@@ -31,13 +36,13 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: 'npm'
 
+      # Block PRs that introduce known HIGH/CRITICAL advisories. Audits prod AND
+      # dev deps from the lockfile before downloading/installing packages.
+      - name: Security audit (npm audit)
+        run: npm audit --package-lock-only --audit-level=high
+
       - name: Install dependencies
         run: npm ci
-
-      # Block PRs that introduce known HIGH/CRITICAL advisories. Audits prod AND
-      # dev deps — a compromised dev dep can poison the published artifact.
-      - name: Security audit (npm audit)
-        run: npm audit --audit-level=high
 
       - name: Type check
         run: npm run typecheck
