@@ -7,6 +7,11 @@ on:
 permissions:
   contents: read
 
+# Also covers the npm bootstrap, package packing, and publish lifecycle hooks.
+# Build explicitly below, without granting dependency install scripts execution.
+env:
+  NPM_CONFIG_IGNORE_SCRIPTS: 'true'
+
 jobs:
   release-please:
     runs-on: ubuntu-latest
@@ -49,6 +54,10 @@ jobs:
           # npm bug (https://github.com/npm/cli/issues/9151). Do NOT chase npm@latest —
           # an unpinned upgrade makes the release non-reproducible.
           npm install --global npm@11.11.1
+
+      # Recheck at release time: advisories can appear after the PR was tested.
+      - name: Security audit (npm audit)
+        run: npm audit --package-lock-only --audit-level=high
 
       - name: Install dependencies
         run: npm ci
