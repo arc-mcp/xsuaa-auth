@@ -72,7 +72,7 @@ This spec freezes: scope, entrypoints, dependency ranges, the logger contract, e
 - **`@sap/xssec` dependency `^4`** — leaf token validator; not a shared instance. **Pure CommonJS** (no ESM entry) → consume via `import xssec from '@sap/xssec'; const { createSecurityContext, XsuaaService } = xssec;` with `esModuleInterop`; documented as a known interop edge (§12).
 - **`@sap-cloud-sdk/connectivity ^4.7.0` dependency** — used only by `./btp`. All three consumers already pin this exact major, so no friction; a core-only consumer (calmcp) installs it unused (acceptable; calmcp has it already). (`undici` was originally listed here too but is dropped in v0.1 — see the drift note above.) `jose` is an **optional peer** (range `>=5 <7`, covers arc-1's 6.x and LISA's 5.x), lazy-imported so non-OIDC consumers (calmcp) need not install it.
 
-**CI peer test-matrix:** `1.18.2 + 5.0.1` (floor), `1.25.3 + 5.0.1` (last pre-1.26), `1.28 + 5.2.1` (arc-1/calmcp prod), `1.29 + 5.2.1` (latest). Node **22 + 24** (the package's `engines.node >= 22` floor — matches arc-1). A `tsc --noEmit` typecheck pinned at the `1.18.2 + 5.0.1` floor (excess-property errors surface only there).
+**CI peer test-matrix:** `1.18.2 + 5.0.1` (floor), `1.25.3 + 5.0.1` (last pre-1.26), `1.28 + 5.2.1` and `1.29 + 5.2.1` (older supported SDKs), `1.32.1 + 5.2.1` (current SDK). Node **22 + 24** (the package's `engines.node >= 22` floor — matches arc-1). A `tsc --noEmit` typecheck pinned at the `1.18.2 + 5.0.1` floor (excess-property errors surface only there).
 
 ---
 

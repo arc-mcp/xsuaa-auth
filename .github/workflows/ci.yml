@@ -34,7 +34,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Block PRs that introduce known HIGH/CRITICAL advisories. Audits prod AND
+      # Block known HIGH/CRITICAL advisories in the complete locked tree. Audits prod AND
       # dev deps — a compromised dev dep can poison the published artifact.
       - name: Security audit (npm audit)
         run: npm audit --audit-level=high
@@ -63,8 +63,9 @@ jobs:
   # the in-range dev versions; this job fixes Node 22 and varies the peers.
   #   1.18.2 + 5.0.1  → floor (first SDK with mcpAuthRouter resourceServerUrl)
   #   1.25.3 + 5.0.1  → last SDK before it hard-bumped express to ^5.2.1
-  #   1.28.x + 5.2.1  → current prod (arc-1 / calmcp)
-  #   1.29.x + 5.2.1  → latest
+  #   1.28.x + 5.2.1  → older supported SDK
+  #   1.29.x + 5.2.1  → older supported SDK
+  #   1.32.1 + 5.2.1 → current SDK
   peer-matrix:
     runs-on: ubuntu-latest
     strategy:
@@ -78,6 +79,8 @@ jobs:
           - sdk: '1.28'
             express: '5.2.1'
           - sdk: '1.29'
+            express: '5.2.1'
+          - sdk: '1.32.1'
             express: '5.2.1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -104,7 +107,7 @@ jobs:
   # (@modelcontextprotocol/sdk 1.18.2 — first version exposing
   # mcpAuthRouter({ resourceServerUrl }) — and express 5.0.1) and typecheck.
   # Excess-property / API-shape errors against the floor surface only here;
-  # the build matrix runs against the in-range dev versions (SDK 1.28 / express 5.2).
+  # the build matrix runs against the in-range dev versions (SDK 1.32 / express 5.2).
   peer-floor:
     runs-on: ubuntu-latest
     steps:
