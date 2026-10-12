@@ -61,8 +61,8 @@ updates:
       # bumps engines.node.
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
-      # Express has a separate compatibility matrix. SDK dev updates remain
-      # enabled; the explicit peer-floor job checks our wider supported range.
+      # Keep Express updates manual; SDK dev updates remain enabled.
+      # The peer matrix and peer-floor job check both supported ranges.
       - dependency-name: "express"
 
   # ─── GitHub Actions ──────────────────────────────────────────────────────
