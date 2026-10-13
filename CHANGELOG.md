@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/arc-mcp/xsuaa-auth/compare/v1.1.0...v1.1.1) (2026-10-13)
+
+
+### Bug Fixes
+
+* **oauth:** answer invalid_grant when XSUAA rejects a refresh token ([#85](https://github.com/arc-mcp/xsuaa-auth/issues/85)) ([5c7029a](https://github.com/arc-mcp/xsuaa-auth/commit/5c7029aff9f309798ee26fb527165036009aa44b))
+
 ## [1.1.0](https://github.com/arc-mcp/xsuaa-auth/compare/v1.0.2...v1.1.0) (2026-09-17)
 
 
