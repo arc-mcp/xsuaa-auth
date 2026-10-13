@@ -48,6 +48,21 @@ Confirmed vulnerabilities receive a [GitHub Security Advisory (GHSA)](https://gi
 - **Misconfiguration in a consuming application** — e.g. failing to set `redirectUriPatterns` in sync with the XSUAA `xs-security.json`, leaving `required: false` in production, or reusing the default `dcrSigningSecret`. The README documents the secure configuration; deployment hardening is the operator's responsibility.
 - **Issues in unsupported versions** (see Supported Versions above).
 
+## Temporary dependency risk acceptance
+
+Until **21 October 2026, 00:00 Europe/Berlin**, CI and publishing accept only
+[GHSA-86w9-cpqp-85rv](https://github.com/advisories/GHSA-86w9-cpqp-85rv), through
+`@sap-cloud-sdk/connectivity@4.9.1 → jks-js@1.1.7 → node-forge@1.4.0`.
+No patched Forge release is available. Review of this package's destination lookup and the
+SDK's keystore conversion found no reachable call to the affected RSA verifier.
+This is temporary risk acceptance, not a fix or proof of non-exploitability; downstream
+consumers still receive the affected dependency and may flag it.
+
+All production and development dependencies remain audited. Other high/critical findings
+and audit failures block. [audit-ci.json](./audit-ci.json) enforces expiry; remove the
+exception when fixed, and reassess if dependency versions or usage change. Any extension
+requires a new maintainer decision. Concrete exposure through this package remains reportable.
+
 ## Safe Harbor
 
 This project supports good-faith security research. Researchers acting in good faith and following this policy will not face legal action.

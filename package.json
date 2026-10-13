@@ -49,6 +49,7 @@
     "access": "public"
   },
   "scripts": {
+    "audit:ci": "audit-ci --config audit-ci.json",
     "build": "tsc",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tests/types/tsconfig.json",
     "test": "vitest run",
@@ -86,6 +87,7 @@
     "@types/node": "^22.20.4",
     "@types/supertest": "^7.2.1",
     "@vitest/coverage-v8": "^5.0.1",
+    "audit-ci": "7.1.0",
     "express": "^5.2.1",
     "husky": "^9.1.7",
     "jose": "^6.2.12",

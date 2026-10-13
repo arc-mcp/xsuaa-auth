@@ -34,10 +34,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Block known HIGH/CRITICAL advisories in the complete locked tree. Audits prod AND
-      # dev deps — a compromised dev dep can poison the published artifact.
+      # Audit all prod/dev dependencies. Only the expiring advisory in audit-ci.json
+      # is accepted; other HIGH/CRITICAL findings and audit errors still block.
       - name: Security audit (npm audit)
-        run: npm audit --audit-level=high
+        run: npm run audit:ci
 
       - name: Type check
         run: npm run typecheck

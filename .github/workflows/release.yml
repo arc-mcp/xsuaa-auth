@@ -53,6 +53,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Recheck at publish time: a previous green CI run may predate exception expiry.
+      - name: Security audit (npm audit)
+        run: npm run audit:ci
+
       - name: Type check
         run: npm run typecheck
 
