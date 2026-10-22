@@ -267,6 +267,7 @@ export class StatelessDcrClientStore implements OAuthRegisteredClientsStore {
       registeredClientId: clientId,
       clientName: client.client_name,
       redirectUriCount: payload.ru.length,
+      redirectUriHosts: [...new Set(payload.ru.map((uri) => new URL(uri).host))],
       idBytes: clientId.length,
     });
 

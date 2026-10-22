@@ -1,12 +1,9 @@
 /**
  * XSUAA-proxying OAuth provider for MCP-native clients.
  *
- * Lifted from arc-1's `XsuaaProxyOAuthProvider` + `createXsuaaOAuthProvider`.
- * The crypto / control-flow is verbatim — the only adaptations are:
- *   - the package's `StatelessDcrClientStore` + `OAuthStateCodec` (parameterized
- *     via {@link CreateXsuaaOAuthProviderOptions}) instead of arc-1's local copies,
- *   - the injected structural logger (default no-op),
- *   - the SDK insulation import (SPEC §8).
+ * Uses a mandatory browser approval step before substituting the shared XSUAA
+ * client. The callback and local authorization-code exchange retain the local
+ * client identity across the upstream flow.
  *
  * Extends ProxyOAuthServerProvider to replace the MCP client's local client_id
  * with the XSUAA service binding client_id when forwarding to XSUAA.
@@ -22,11 +19,13 @@
  * (issue #214 callback proxy — XSUAA echoes a literal `+` in `state`).
  */
 
+import type { Response } from 'express';
 import { StatelessDcrClientStore } from './dcr-client-store.js';
-import type { OAuthClientInformationFull } from './internal/sdk.js';
+import type { OAuthClientInformationFull, OAuthRegisteredClientsStore } from './internal/sdk.js';
 import { InvalidGrantError, ProxyOAuthServerProvider } from './internal/sdk.js';
 import type { Logger } from './logger.js';
 import { noopLogger } from './logger.js';
+import { type AuthorizationParams, OAuthConsent } from './oauth-consent.js';
 import { OAuthStateCodec } from './oauth-state.js';
 import type { Verifier } from './types.js';
 import type { XsuaaCredentials } from './xsuaa.js';
@@ -77,6 +76,8 @@ export class XsuaaProxyOAuthProvider extends ProxyOAuthServerProvider {
   /** Signs/verifies the opaque, URL-safe state token sent to XSUAA. */
   private stateCodec: OAuthStateCodec;
   private readonly logger: Logger;
+  private readonly consent: OAuthConsent;
+  private readonly dcrEnabled: boolean;
 
   constructor(
     credentials: XsuaaCredentials,
@@ -85,6 +86,7 @@ export class XsuaaProxyOAuthProvider extends ProxyOAuthServerProvider {
     callbackUrl: string,
     stateCodec: OAuthStateCodec,
     logger: Logger = noopLogger,
+    options: { authorizationUrl?: string; signingSecret?: string; dcrEnabled?: boolean } = {},
   ) {
     const authUrl = `${credentials.url}/oauth/authorize`;
     const tokenUrl = `${credentials.url}/oauth/token`;
@@ -108,6 +110,12 @@ export class XsuaaProxyOAuthProvider extends ProxyOAuthServerProvider {
     this.callbackUrl = callbackUrl;
     this.stateCodec = stateCodec;
     this.logger = logger;
+    this.consent = new OAuthConsent(
+      options.signingSecret ?? credentials.clientsecret,
+      options.authorizationUrl ?? new URL('../authorize', callbackUrl).href,
+      callbackUrl,
+    );
+    this.dcrEnabled = options.dcrEnabled !== false;
     this.skipLocalPkceValidation = true;
   }
 
@@ -116,8 +124,8 @@ export class XsuaaProxyOAuthProvider extends ProxyOAuthServerProvider {
    * The MCP SDK checks this to decide whether to advertise
    * registration_endpoint in OAuth metadata and handle POST /register.
    */
-  override get clientsStore(): StatelessDcrClientStore {
-    return this._localClientStore;
+  override get clientsStore(): OAuthRegisteredClientsStore {
+    return this.dcrEnabled ? this._localClientStore : { getClient: (id) => this._localClientStore.getClient(id) };
   }
 
   /**
@@ -126,15 +134,17 @@ export class XsuaaProxyOAuthProvider extends ProxyOAuthServerProvider {
    */
   override async authorize(
     _client: OAuthClientInformationFull,
-    params: {
-      state?: string;
-      scopes?: string[];
-      codeChallenge: string;
-      redirectUri: string;
-      resource?: URL;
-    },
-    res: { redirect(url: string): void },
+    params: AuthorizationParams,
+    res: Response,
   ): Promise<void> {
+    // Enforce at the provider boundary as well as the SDK/router: direct callers
+    // must not bypass redirect validation or the mandatory consent decision.
+    if ((await this._localClientStore.checkRedirectUri(_client.client_id, params.redirectUri)) !== 'ok') {
+      res.status(400).json({ error: 'invalid_request', error_description: 'Unregistered redirect_uri' });
+      return;
+    }
+    const browserBinding = this.consent.approve(_client, params, res);
+    if (!browserBinding) return;
     // ── Callback proxy (issue #214) ──────────────────────────────────
     // Instead of sending XSUAA the client's redirect_uri and the client's
     // raw `state`, we send XSUAA this server's OWN /oauth/callback and an
@@ -154,6 +164,7 @@ export class XsuaaProxyOAuthProvider extends ProxyOAuthServerProvider {
       clientState: params.state,
       clientRedirectUri: params.redirectUri,
       clientId: _client.client_id,
+      browserBinding,
     });
 
     const targetUrl = new URL(this.xsuaaAuthUrl);
@@ -203,12 +214,15 @@ export class XsuaaProxyOAuthProvider extends ProxyOAuthServerProvider {
     refresh_token?: string;
     scope?: string;
   }> {
+    const upstreamCode = this.stateCodec.authorizationCodes.decode(authorizationCode, _client.client_id, _redirectUri);
+    if (!upstreamCode)
+      throw new InvalidGrantError('Authorization code is invalid, expired or belongs to another client');
     this.logger.debug('XSUAA token exchange: authorization_code', {
       hasCodeVerifier: !!codeVerifier,
     });
     const params = new URLSearchParams({
       grant_type: 'authorization_code',
-      code: authorizationCode,
+      code: upstreamCode,
       client_id: this.xsuaaClientId,
       client_secret: this.xsuaaClientSecret,
     });
@@ -350,6 +364,8 @@ export class XsuaaProxyOAuthProvider extends ProxyOAuthServerProvider {
  * underlying {@link StatelessDcrClientStore} + {@link OAuthStateCodec}.
  */
 export interface CreateXsuaaOAuthProviderOptions {
+  /** Set false to omit /register and its discovery metadata; existing clients still work with consent. */
+  dcrEnabled?: boolean;
   /** Prefix for DCR-issued client_ids. Threaded into the store. */
   clientIdPrefix?: string;
   /** Domain-separation label for the DCR client_id signing key. */
@@ -358,7 +374,7 @@ export interface CreateXsuaaOAuthProviderOptions {
   stateKdfLabel?: string;
   /** Lifetime of issued DCR client_ids in seconds. `0` disables expiration. */
   dcrTtlSeconds?: number;
-  /** Lifetime of OAuth-state tokens in seconds. `0` disables expiration. */
+  /** Legacy codec state lifetime. Browser-approved flows are always capped at ten minutes. */
   stateTtlSeconds?: number;
   /**
    * Optional dedicated secret for HMAC-signing DCR client_ids + OAuth state.
@@ -451,7 +467,11 @@ export function createXsuaaOAuthProvider(
 
   const callbackUrl = options.callbackUrl ?? `${appUrl.replace(/\/$/, '')}/oauth/callback`;
 
-  const provider = new XsuaaProxyOAuthProvider(credentials, verifier, clientStore, callbackUrl, stateCodec, logger);
+  const provider = new XsuaaProxyOAuthProvider(credentials, verifier, clientStore, callbackUrl, stateCodec, logger, {
+    authorizationUrl: `${appUrl.replace(/\/$/, '')}/authorize`,
+    signingSecret: dcrSigningSecret,
+    dcrEnabled: options.dcrEnabled,
+  });
 
   logger.info('XSUAA OAuth provider created (stateless DCR + callback proxy)', {
     xsappname: credentials.xsappname,

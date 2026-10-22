@@ -25,7 +25,7 @@ vi.mock('@sap/xssec', () => {
 
 const { XsuaaProxyOAuthProvider, createXsuaaOAuthProvider } = await import('../src/index.js');
 
-import type { OAuthStateCodec } from '../src/index.js';
+import { OAuthStateCodec } from '../src/index.js';
 import { makeCapturingLogger } from './helpers/test-logger.js';
 
 afterEach(() => {
@@ -76,13 +76,14 @@ function createTestProxyProvider({
   stateToken?: string;
 } = {}): {
   provider: AnyProvider;
-  stateCodec: { encode: ReturnType<typeof vi.fn> };
+  stateCodec: OAuthStateCodec;
 } {
-  const stateCodec = { encode: vi.fn().mockReturnValue(stateToken) };
+  const stateCodec = new OAuthStateCodec(STUB_XSUAA_CREDS.clientsecret);
+  vi.spyOn(stateCodec, 'encode').mockReturnValue(stateToken);
   const provider = new XsuaaProxyOAuthProvider(
     STUB_XSUAA_CREDS,
     vi.fn() as never,
-    { getClient: vi.fn() } as never,
+    { getClient: vi.fn(), checkRedirectUri: vi.fn().mockResolvedValue('ok') } as never,
     callbackUrl,
     stateCodec as unknown as OAuthStateCodec,
   );
@@ -149,38 +150,25 @@ describe('createXsuaaOAuthProvider', () => {
 });
 
 describe('XsuaaProxyOAuthProvider', () => {
-  it('authorize redirects to XSUAA with the bound client id, callback URI, qualified scopes, and opaque state', async () => {
-    const { provider, stateCodec } = createTestProxyProvider({
-      callbackUrl: 'https://arc1.example.com/base/oauth/callback',
-    });
-    const redirect = vi.fn();
-
+  it('direct provider authorization requires consent before signing state or redirecting', async () => {
+    const { provider, stateCodec } = createTestProxyProvider();
+    const res = {
+      req: { method: 'GET', headers: {} },
+      redirect: vi.fn(),
+      set: vi.fn(),
+      cookie: vi.fn(),
+      status: vi.fn().mockReturnThis(),
+      type: vi.fn().mockReturnThis(),
+      send: vi.fn(),
+    };
     await provider.authorize(
       { client_id: 'local-client-id', redirect_uris: ['https://client.example.com/callback'] },
-      {
-        state: 'client+state/with/slash',
-        scopes: ['openid', 'read', 'uaa.user', ''],
-        codeChallenge: 'challenge-123',
-        redirectUri: 'https://client.example.com/callback',
-        resource: new URL('https://arc1.example.com/mcp'),
-      },
-      { redirect },
+      { codeChallenge: 'challenge-123', redirectUri: 'https://client.example.com/callback' },
+      res,
     );
-
-    const url = new URL(redirect.mock.calls[0]?.[0] as string);
-    expect(`${url.origin}${url.pathname}`).toBe(`${STUB_XSUAA_CREDS.url}/oauth/authorize`);
-    expect(url.searchParams.get('client_id')).toBe(STUB_XSUAA_CREDS.clientid);
-    expect(url.searchParams.get('redirect_uri')).toBe('https://arc1.example.com/base/oauth/callback');
-    expect(url.searchParams.get('code_challenge')).toBe('challenge-123');
-    // openid stays unqualified; read → arc1.read; uaa.user already qualified; '' dropped.
-    expect(url.searchParams.get('scope')).toBe('openid arc1.read uaa.user');
-    expect(url.searchParams.get('resource')).toBe('https://arc1.example.com/mcp');
-    expect(url.searchParams.get('state')).toBe('mcp-state-token');
-    expect(stateCodec.encode).toHaveBeenCalledWith({
-      clientState: 'client+state/with/slash',
-      clientRedirectUri: 'https://client.example.com/callback',
-      clientId: 'local-client-id',
-    });
+    expect(res.redirect).not.toHaveBeenCalled();
+    expect(stateCodec.encode).not.toHaveBeenCalled();
+    expect(res.send).toHaveBeenCalledWith(expect.stringContaining('Approve client access'));
   });
 
   it('exchanges authorization codes with XSUAA credentials and the proxy callback URI', async () => {
@@ -201,7 +189,11 @@ describe('XsuaaProxyOAuthProvider', () => {
 
     const token = await provider.exchangeAuthorizationCode(
       { client_id: 'local-client-id' },
-      'auth-code',
+      new OAuthStateCodec(STUB_XSUAA_CREDS.clientsecret).authorizationCodes.encode(
+        'auth-code',
+        'local-client-id',
+        'https://client.example.com/callback',
+      ),
       'verifier',
       'https://client.example.com/callback',
     );
@@ -235,15 +227,22 @@ describe('XsuaaProxyOAuthProvider', () => {
     const provider = new XsuaaProxyOAuthProvider(
       STUB_XSUAA_CREDS,
       vi.fn() as never,
-      { getClient: vi.fn() } as never,
+      { getClient: vi.fn(), checkRedirectUri: vi.fn().mockResolvedValue('ok') } as never,
       'https://arc1.example.com/oauth/callback',
-      { encode: vi.fn() } as unknown as OAuthStateCodec,
+      new OAuthStateCodec(STUB_XSUAA_CREDS.clientsecret),
       logger,
     ) as unknown as AnyProvider;
 
-    await expect(provider.exchangeAuthorizationCode({ client_id: 'local-client-id' }, 'auth-code')).rejects.toThrow(
-      'XSUAA token exchange failed: 502',
-    );
+    await expect(
+      provider.exchangeAuthorizationCode(
+        { client_id: 'local-client-id' },
+        new OAuthStateCodec(STUB_XSUAA_CREDS.clientsecret).authorizationCodes.encode(
+          'auth-code',
+          'local-client-id',
+          'https://client.example.com/callback',
+        ),
+      ),
+    ).rejects.toThrow('XSUAA token exchange failed: 502');
     expect(logger.errors.find((e) => /XSUAA token exchange failed/.test(e.message))?.data).toEqual({
       status: 502,
     });
@@ -279,9 +278,9 @@ describe('XsuaaProxyOAuthProvider', () => {
     const provider = new XsuaaProxyOAuthProvider(
       STUB_XSUAA_CREDS,
       vi.fn() as never,
-      { getClient: vi.fn() } as never,
+      { getClient: vi.fn(), checkRedirectUri: vi.fn().mockResolvedValue('ok') } as never,
       'https://arc1.example.com/oauth/callback',
-      { encode: vi.fn() } as unknown as OAuthStateCodec,
+      new OAuthStateCodec(STUB_XSUAA_CREDS.clientsecret),
       logger,
     ) as unknown as AnyProvider;
 
@@ -306,9 +305,9 @@ describe('XsuaaProxyOAuthProvider', () => {
     const provider = new XsuaaProxyOAuthProvider(
       STUB_XSUAA_CREDS,
       vi.fn() as never,
-      { getClient: vi.fn() } as never,
+      { getClient: vi.fn(), checkRedirectUri: vi.fn().mockResolvedValue('ok') } as never,
       'https://arc1.example.com/oauth/callback',
-      { encode: vi.fn() } as unknown as OAuthStateCodec,
+      new OAuthStateCodec(STUB_XSUAA_CREDS.clientsecret),
       logger,
     ) as unknown as AnyProvider;
 
@@ -328,9 +327,9 @@ describe('XsuaaProxyOAuthProvider', () => {
     const provider = new XsuaaProxyOAuthProvider(
       STUB_XSUAA_CREDS,
       vi.fn() as never,
-      { getClient: vi.fn() } as never,
+      { getClient: vi.fn(), checkRedirectUri: vi.fn().mockResolvedValue('ok') } as never,
       'https://arc1.example.com/oauth/callback',
-      { encode: vi.fn() } as unknown as OAuthStateCodec,
+      new OAuthStateCodec(STUB_XSUAA_CREDS.clientsecret),
       logger,
     ) as unknown as AnyProvider;
 
@@ -355,9 +354,9 @@ describe('XsuaaProxyOAuthProvider', () => {
     const provider = new XsuaaProxyOAuthProvider(
       STUB_XSUAA_CREDS,
       vi.fn() as never,
-      { getClient: vi.fn() } as never,
+      { getClient: vi.fn(), checkRedirectUri: vi.fn().mockResolvedValue('ok') } as never,
       'https://arc1.example.com/oauth/callback',
-      { encode: vi.fn() } as unknown as OAuthStateCodec,
+      new OAuthStateCodec(STUB_XSUAA_CREDS.clientsecret),
       logger,
     ) as unknown as AnyProvider;
 

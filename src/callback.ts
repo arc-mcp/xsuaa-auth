@@ -2,10 +2,6 @@
  * OAuth callback handler — the second half of the XSUAA callback proxy that
  * fixes the `+`-in-state bug (issue #214).
  *
- * Ported verbatim from arc-1's `createOAuthCallbackHandler`. The only changes are
- * the injected structural logger (default no-op) and the package's
- * {@link OAuthStateCodec} / {@link StatelessDcrClientStore} imports.
- *
  * XSUAA redirects here (not to the client) with an opaque base64url `state` token
  * that the provider's `authorize()` minted. We verify + decode it to recover the
  * client's ORIGINAL `redirect_uri` and `state`, then 302 to the client re-emitting
@@ -20,13 +16,14 @@
  * HMAC, but the redirect target must still belong to the client that will exchange
  * the code. `clientStore.checkRedirectUri` makes that decision per client type and
  * the handler fails CLOSED on any lookup error. When `clientStore` is omitted the
- * binding check is skipped (legacy round-trip tests).
+ * client-store check is skipped; browser approval is still mandatory.
  */
 
 import type { RequestHandler } from 'express';
 import type { StatelessDcrClientStore } from './dcr-client-store.js';
 import type { Logger } from './logger.js';
 import { noopLogger } from './logger.js';
+import { consumeBrowserBinding } from './oauth-consent.js';
 import type { OAuthStateCodec } from './oauth-state.js';
 
 /**
@@ -75,8 +72,8 @@ function renderOAuthErrorPage(error: string, errorDescription: string, clientRet
 
 /**
  * Build the Express handler for `/oauth/callback` (the issue-#214 callback proxy
- * second half). `clientStore` enables the redirect_uri binding check; omit it only
- * for legacy round-trip tests.
+ * second half). `clientStore` enables the redirect_uri binding check. Browser
+ * approval is mandatory even when no store is supplied.
  */
 export function createOAuthCallbackHandler(
   stateCodec: OAuthStateCodec,
@@ -86,6 +83,7 @@ export function createOAuthCallbackHandler(
   const logger = options.logger ?? noopLogger;
 
   return async (req, res): Promise<void> => {
+    res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
     const stateToken = typeof req.query.state === 'string' ? req.query.state : '';
     const decoded = stateCodec.decode(stateToken);
     if (decoded.kind !== 'ok') {
@@ -100,6 +98,17 @@ export function createOAuthCallbackHandler(
             '<h1>Authentication failed</h1>' +
             '<p>The OAuth state token was invalid or expired. Please retry the sign-in from your MCP client.</p>' +
             '</body></html>',
+        );
+      return;
+    }
+
+    if (!consumeBrowserBinding(req, res, decoded.browserBinding)) {
+      logger.warn('OAuth callback: missing or mismatched browser approval');
+      res
+        .status(400)
+        .type('html')
+        .send(
+          '<!doctype html><html><body><h1>Authentication failed</h1><p>This sign-in was not approved in this browser, or has already completed. Restart sign-in from your MCP client.</p></body></html>',
         );
       return;
     }
@@ -210,7 +219,10 @@ export function createOAuthCallbackHandler(
     // Success: forward the authorization code, re-attaching the client's ORIGINAL
     // state. URLSearchParams serialization encodes `+` as `%2B`, which is exactly
     // what fixes the round-trip (issue #214).
-    target.searchParams.set('code', code);
+    target.searchParams.set(
+      'code',
+      stateCodec.authorizationCodes.encode(code, decoded.clientId, decoded.clientRedirectUri),
+    );
     if (decoded.clientState !== undefined) {
       target.searchParams.set('state', decoded.clientState);
     }

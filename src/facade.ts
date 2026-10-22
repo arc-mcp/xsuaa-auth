@@ -19,7 +19,7 @@
  * header (popup OAuth requires COOP unset).
  */
 
-import type { Express, RequestHandler } from 'express';
+import { type Express, type RequestHandler, urlencoded } from 'express';
 import { createOAuthCallbackHandler } from './callback.js';
 import { applyCors } from './cors.js';
 import { mcpAuthRouter, requireBearerAuth } from './internal/sdk.js';
@@ -52,6 +52,8 @@ export interface AuthOptions {
     /** Initial default-client URIs; each must also match redirectUriPatterns at the callback. */
     defaultRedirectUris?: readonly string[];
     dcrTtlSeconds?: number;
+    dcrEnabled?: boolean;
+    /** Legacy codec state lifetime. Browser-approved flows are always capped at ten minutes. */
     stateTtlSeconds?: number;
     dcrSigningSecret?: string;
     /**
@@ -166,6 +168,7 @@ export function setupHttpAuth(
       dcrKdfLabel: xsuaa.dcrKdfLabel,
       stateKdfLabel: xsuaa.stateKdfLabel,
       dcrTtlSeconds: xsuaa.dcrTtlSeconds,
+      dcrEnabled: xsuaa.dcrEnabled,
       stateTtlSeconds: xsuaa.stateTtlSeconds,
       dcrSigningSecret: xsuaa.dcrSigningSecret,
       redirectUriPatterns: xsuaa.redirectUriPatterns,
@@ -181,6 +184,9 @@ export function setupHttpAuth(
     // the server callback; this package validates the client redirect. Also merges
     // query params into the body for clients that POST /authorize with params in
     // the query string.
+    // The shim must see form fields before the SDK validates the default
+    // client's exact redirects, including after a load-balanced approval POST.
+    app.use('/authorize', urlencoded({ extended: false }));
     app.use('/authorize', (req, _res, next) => {
       if (
         req.method === 'POST' &&

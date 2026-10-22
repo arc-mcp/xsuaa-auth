@@ -52,6 +52,8 @@
  */
 
 import crypto from 'node:crypto';
+import { OAuthCodeCodec } from './oauth-code.js';
+import { type BrowserBinding, isBrowserBinding } from './oauth-consent.js';
 
 /** Default domain-separation label for the HKDF-style key derivation. Bump the
  *  version suffix to invalidate every outstanding state token at once. */
@@ -94,16 +96,19 @@ interface StatePayload {
   cid: string;
   /** Expiry, epoch seconds. `0` means "never expires". */
   exp: number;
+  /** Present only after explicit browser consent. Legacy tokens are not usable at the callback. */
+  browser?: BrowserBinding;
 }
 
 export type DecodeResult =
-  | { kind: 'ok'; clientState?: string; clientRedirectUri: string; clientId: string }
+  | { kind: 'ok'; clientState?: string; clientRedirectUri: string; clientId: string; browserBinding?: BrowserBinding }
   | { kind: 'error'; reason: 'malformed' | 'bad_signature' | 'invalid_payload' | 'expired' };
 
 /**
  * Signs and verifies OAuth `state` tokens for the XSUAA callback proxy.
  */
 export class OAuthStateCodec {
+  readonly authorizationCodes: OAuthCodeCodec;
   private readonly hmacKey: Buffer;
   private readonly ttlSeconds: number;
 
@@ -112,6 +117,7 @@ export class OAuthStateCodec {
       throw new Error('OAuthStateCodec requires a non-empty signingSecret');
     }
     const kdfLabel = options.kdfLabel ?? DEFAULT_KDF_LABEL;
+    this.authorizationCodes = new OAuthCodeCodec(signingSecret, kdfLabel);
     // HKDF-style: derive a dedicated key from the shared secret + label.
     // The label domain-separates this key from the DCR client-id signing key.
     this.hmacKey = crypto.createHmac('sha256', signingSecret).update(kdfLabel).digest();
@@ -124,7 +130,13 @@ export class OAuthStateCodec {
    *
    * @param input.now Injectable clock (epoch ms) for deterministic tests.
    */
-  encode(input: { clientState?: string; clientRedirectUri: string; clientId: string; now?: number }): string {
+  encode(input: {
+    clientState?: string;
+    clientRedirectUri: string;
+    clientId: string;
+    browserBinding?: BrowserBinding;
+    now?: number;
+  }): string {
     const nowSec = Math.floor((input.now ?? Date.now()) / 1000);
     const payload: StatePayload = {
       v: 1,
@@ -135,6 +147,14 @@ export class OAuthStateCodec {
     };
     if (input.clientState !== undefined) {
       payload.s = input.clientState;
+    }
+    if (input.browserBinding !== undefined) {
+      if (!isBrowserBinding(input.browserBinding)) throw new Error('Invalid OAuth browser binding');
+      payload.browser = input.browserBinding;
+      // Browser-bound authorizations never outlive the consent window, even if
+      // the legacy stateTtlSeconds option disables state expiration.
+      payload.exp =
+        nowSec + (this.ttlSeconds > 0 ? Math.min(this.ttlSeconds, DEFAULT_TTL_SECONDS) : DEFAULT_TTL_SECONDS);
     }
     const payloadB64 = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
     return `${payloadB64}.${this.sign(payloadB64)}`;
@@ -170,7 +190,13 @@ export class OAuthStateCodec {
       return { kind: 'error', reason: 'expired' };
     }
 
-    return { kind: 'ok', clientState: payload.s, clientRedirectUri: payload.r, clientId: payload.cid };
+    return {
+      kind: 'ok',
+      clientState: payload.s,
+      clientRedirectUri: payload.r,
+      clientId: payload.cid,
+      ...(payload.browser ? { browserBinding: payload.browser } : {}),
+    };
   }
 
   private sign(payloadB64: string): string {
@@ -201,7 +227,15 @@ function parsePayload(payloadB64: string): StatePayload | undefined {
     if (typeof obj.cid !== 'string' || obj.cid.length === 0) return undefined;
     if (typeof obj.exp !== 'number' || !Number.isFinite(obj.exp)) return undefined;
     if (obj.s !== undefined && typeof obj.s !== 'string') return undefined;
-    return { v: 1, s: obj.s as string | undefined, r: obj.r, cid: obj.cid, exp: obj.exp };
+    if (obj.browser !== undefined && (!isBrowserBinding(obj.browser) || obj.exp <= 0)) return undefined;
+    return {
+      v: 1,
+      s: obj.s as string | undefined,
+      r: obj.r,
+      cid: obj.cid,
+      exp: obj.exp,
+      ...(obj.browser ? { browser: obj.browser as BrowserBinding } : {}),
+    };
   } catch {
     return undefined;
   }
