@@ -171,9 +171,7 @@ export class OAuthConsent {
         res.redirect(303, target.href);
         return;
       }
-      const callbackNonce = randomBytes(32).toString('base64url');
-      res.cookie(stateCookie, callbackNonce, { ...cookieOptions(stateCookie), maxAge: FLOW_SECONDS * 1000 });
-      return { cookieName: stateCookie, digest: createHash('sha256').update(callbackNonce).digest('base64url') };
+      return this.mintCallbackBinding(res, stateCookie);
     }
 
     const nonce = randomBytes(32).toString('base64url');
@@ -198,6 +196,22 @@ export class OAuthConsent {
 <h2>Requested permissions</h2><p>${escapeHtml(scopeText)}</p>
 <form method="post" action="${escapeHtml(this.authorizationUrl)}">${inputs}<button type="submit" name="consent_action" value="deny">Deny</button> <button type="submit" name="consent_action" value="approve">Approve and continue</button></form>
 </body></html>`);
+  }
+
+  /**
+   * Skip the consent page for a deployment-approved return address, but keep the
+   * callback bound to the browser that started the flow: an XSUAA URL obtained
+   * here still fails at the callback in any other browser.
+   */
+  bindWithoutApproval(res: Response): BrowserBinding {
+    res.set({ 'Cache-Control': 'no-store', Pragma: 'no-cache', 'Referrer-Policy': 'no-referrer' });
+    return this.mintCallbackBinding(res, `${this.stateCookie}-${randomBytes(8).toString('hex')}`);
+  }
+
+  private mintCallbackBinding(res: Response, stateCookie: string): BrowserBinding {
+    const callbackNonce = randomBytes(32).toString('base64url');
+    res.cookie(stateCookie, callbackNonce, { ...cookieOptions(stateCookie), maxAge: FLOW_SECONDS * 1000 });
+    return { cookieName: stateCookie, digest: createHash('sha256').update(callbackNonce).digest('base64url') };
   }
 
   private sign(nonce: string, expires: number, fields: Record<string, string>): string {

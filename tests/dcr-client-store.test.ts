@@ -26,6 +26,7 @@ function makeStore(
     logger?: CapturingLogger;
     clientIdPrefix?: string;
     kdfLabel?: string;
+    dcrRedirectUriPatterns?: readonly string[];
   } = {},
 ) {
   return new StatelessDcrClientStore(XSUAA_ID, XSUAA_SECRET, SIGNING, opts);
@@ -243,6 +244,77 @@ describe('StatelessDcrClientStore', () => {
     store.ensureRedirectUri(registered.client_id, 'https://other.example.com/cb');
     const fetched = await store.getClient(registered.client_id);
     expect(fetched?.redirect_uris).toEqual(['https://example.com/cb']);
+  });
+});
+
+describe('StatelessDcrClientStore dcrRedirectUriPatterns', () => {
+  // The redirect URIs VS Code's built-in MCP OAuth registers, plus a BAS workspace callback.
+  const VS_CODE = [
+    'https://insiders.vscode.dev/redirect',
+    'https://vscode.dev/redirect',
+    'http://127.0.0.1/',
+    'http://127.0.0.1:33418/',
+  ];
+  const BAS = 'https://port3000-workspaces-ws-abcde.eu10.applicationstudio.cloud.sap/callback';
+  const PATTERNS = [
+    'https://vscode.dev/redirect',
+    'https://insiders.vscode.dev/redirect',
+    'http://127.0.0.1/**',
+    'http://127.0.0.1:*/**',
+    'https://*.applicationstudio.cloud.sap/callback',
+  ];
+
+  it('accepts registrations whose redirect URIs all match', async () => {
+    const store = makeStore({ dcrRedirectUriPatterns: PATTERNS });
+    const vscode = await store.registerClient({ redirect_uris: VS_CODE, token_endpoint_auth_method: 'none' });
+    const bas = await store.registerClient({ redirect_uris: [BAS], token_endpoint_auth_method: 'none' });
+
+    expect((await store.getClient(vscode.client_id))?.redirect_uris).toEqual(VS_CODE);
+    expect(await store.checkRedirectUri(bas.client_id, BAS)).toBe('ok');
+  });
+
+  it('rejects a registration with any non-matching redirect URI as invalid client metadata', async () => {
+    const logger = makeCapturingLogger();
+    const store = makeStore({ dcrRedirectUriPatterns: PATTERNS, logger });
+
+    for (const redirect_uris of [
+      ['https://attacker.example/cb'],
+      [BAS, 'https://attacker.example/cb'],
+      ['https://port3000-workspaces-ws-abcde.eu10.applicationstudio.cloud.sap/other'],
+      ['https://attacker.example\\@x.applicationstudio.cloud.sap/callback'],
+    ]) {
+      await expect(store.registerClient({ redirect_uris })).rejects.toMatchObject({
+        errorCode: 'invalid_client_metadata',
+      });
+    }
+    const rejected = logger.audit.filter((e) => e.event === 'oauth_client_registration_rejected');
+    expect(rejected[0]).toMatchObject({ redirectUriHost: 'attacker.example', reason: 'redirect_uri_not_allowlisted' });
+    expect(JSON.stringify(rejected)).not.toContain('/cb');
+    expect(logger.audit.some((e) => e.event === 'oauth_client_registered')).toBe(false);
+  });
+
+  it('narrows client_ids registered before the allowlist was set', async () => {
+    const earlier = await makeStore().registerClient({
+      redirect_uris: ['https://attacker.example/cb', 'http://127.0.0.1:33418/'],
+      token_endpoint_auth_method: 'none',
+    });
+    const store = makeStore({ dcrRedirectUriPatterns: PATTERNS });
+
+    expect((await store.getClient(earlier.client_id))?.redirect_uris).toEqual(['http://127.0.0.1:33418/']);
+    expect(await store.checkRedirectUri(earlier.client_id, 'https://attacker.example/cb')).toBe('unregistered');
+    expect(await store.checkRedirectUri(earlier.client_id, 'http://127.0.0.1:33418/')).toBe('ok');
+  });
+
+  it('rejects every DCR redirect when the allowlist is empty, and keeps the default policy when unset', async () => {
+    await expect(
+      makeStore({ dcrRedirectUriPatterns: [] }).registerClient({ redirect_uris: ['http://127.0.0.1:33418/'] }),
+    ).rejects.toMatchObject({ errorCode: 'invalid_client_metadata' });
+    await expect(makeStore().registerClient({ redirect_uris: ['https://attacker.example/cb'] })).resolves.toBeDefined();
+  });
+
+  it('does not change the default client policy', async () => {
+    const store = makeStore({ dcrRedirectUriPatterns: [] });
+    expect(await store.checkRedirectUri(XSUAA_ID, 'http://localhost:6274/oauth/callback')).toBe('ok');
   });
 });
 

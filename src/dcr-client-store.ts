@@ -35,7 +35,11 @@
  */
 
 import crypto from 'node:crypto';
-import type { OAuthClientInformationFull, OAuthRegisteredClientsStore } from './internal/sdk.js';
+import {
+  InvalidClientMetadataError,
+  type OAuthClientInformationFull,
+  type OAuthRegisteredClientsStore,
+} from './internal/sdk.js';
 import type { Logger } from './logger.js';
 import { noopLogger } from './logger.js';
 import {
@@ -133,6 +137,16 @@ export interface StatelessDcrClientStoreOptions {
   redirectUriPatterns?: readonly string[];
 
   /**
+   * Optional allowlist for DCR redirect URIs, using the same glob syntax as
+   * `redirectUriPatterns`. When set, registration rejects every redirect_uri
+   * that does not match (HTTP 400 `invalid_client_metadata`), and a URI in an
+   * earlier stateless registration that no longer matches is dropped from the
+   * client, so narrowing the list also applies to existing client_ids. An empty
+   * array rejects every DCR redirect. Default: unset (no additional restriction).
+   */
+  dcrRedirectUriPatterns?: readonly string[];
+
+  /**
    * Built-in redirect_uris baked into the pre-registered default client.
    * Default {@link XSUAA_DEFAULT_REDIRECT_URIS}. Each URI must also match
    * redirectUriPatterns at the callback.
@@ -155,6 +169,7 @@ export class StatelessDcrClientStore implements OAuthRegisteredClientsStore {
   private readonly now: () => number;
   private readonly idPrefix: string;
   private readonly redirectUriPatterns: readonly string[];
+  private readonly dcrRedirectUriPatterns: readonly string[] | undefined;
   private readonly logger: Logger;
 
   constructor(
@@ -169,6 +184,7 @@ export class StatelessDcrClientStore implements OAuthRegisteredClientsStore {
     this.logger = options.logger ?? noopLogger;
     this.idPrefix = options.clientIdPrefix ?? DEFAULT_ID_PREFIX;
     this.redirectUriPatterns = options.redirectUriPatterns ?? XSUAA_DEFAULT_REDIRECT_URI_PATTERNS;
+    this.dcrRedirectUriPatterns = options.dcrRedirectUriPatterns ? [...options.dcrRedirectUriPatterns] : undefined;
     const kdfLabel = options.kdfLabel ?? DEFAULT_KDF_LABEL;
     const defaultRedirectUris = options.defaultRedirectUris ?? XSUAA_DEFAULT_REDIRECT_URIS;
     // Defense-in-depth: warn (don't throw) on weak signing secrets. NIST
@@ -231,6 +247,17 @@ export class StatelessDcrClientStore implements OAuthRegisteredClientsStore {
     if (client.redirect_uris) {
       for (const uri of client.redirect_uris) {
         validateRedirectUri(uri, this.redirectUriPatterns);
+        if (!this.isAllowedDcrRedirect(uri)) {
+          this.logger.emitAudit?.({
+            timestamp: new Date().toISOString(),
+            level: 'warn',
+            event: 'oauth_client_registration_rejected',
+            clientName: client.client_name,
+            redirectUriHost: new URL(uri).host,
+            reason: 'redirect_uri_not_allowlisted',
+          });
+          throw new InvalidClientMetadataError('redirect_uri is not allowed for dynamic client registration');
+        }
       }
     }
 
@@ -363,6 +390,10 @@ export class StatelessDcrClientStore implements OAuthRegisteredClientsStore {
 
   // ── Internals: encode / decode / sign / verify ──
 
+  private isAllowedDcrRedirect(uri: string): boolean {
+    return this.dcrRedirectUriPatterns === undefined || matchesRedirectPattern(uri, this.dcrRedirectUriPatterns);
+  }
+
   private payloadToClientInfo(clientId: string, payload: SignedPayload): OAuthClientInformationFull {
     // Public clients (token_endpoint_auth_method 'none') carry no secret — see
     // registerClient. getClient must report none too, or the SDK's token-endpoint
@@ -373,7 +404,8 @@ export class StatelessDcrClientStore implements OAuthRegisteredClientsStore {
       client_id: clientId,
       client_secret: isPublicClient ? undefined : this.deriveSecret(clientId),
       client_id_issued_at: payload.iat,
-      redirect_uris: payload.ru,
+      // A narrowed allowlist also applies to registrations signed before it.
+      redirect_uris: payload.ru.filter((uri) => this.isAllowedDcrRedirect(uri)),
       grant_types: payload.gt ?? [...DEFAULT_GRANT_TYPES],
       response_types: payload.rt ?? [...DEFAULT_RESPONSE_TYPES],
       token_endpoint_auth_method: payload.am ?? DEFAULT_TOKEN_AUTH_METHOD,

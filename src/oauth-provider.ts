@@ -27,6 +27,7 @@ import type { Logger } from './logger.js';
 import { noopLogger } from './logger.js';
 import { type AuthorizationParams, OAuthConsent } from './oauth-consent.js';
 import { OAuthStateCodec } from './oauth-state.js';
+import { matchesRedirectPattern } from './redirect-uris.js';
 import type { Verifier } from './types.js';
 import type { XsuaaCredentials } from './xsuaa.js';
 import { createXsuaaTokenVerifier, qualifyXsuaaScopes } from './xsuaa.js';
@@ -78,6 +79,7 @@ export class XsuaaProxyOAuthProvider extends ProxyOAuthServerProvider {
   private readonly logger: Logger;
   private readonly consent: OAuthConsent;
   private readonly dcrEnabled: boolean;
+  private readonly consentExemptRedirectUriPatterns: readonly string[];
 
   constructor(
     credentials: XsuaaCredentials,
@@ -86,7 +88,12 @@ export class XsuaaProxyOAuthProvider extends ProxyOAuthServerProvider {
     callbackUrl: string,
     stateCodec: OAuthStateCodec,
     logger: Logger = noopLogger,
-    options: { authorizationUrl?: string; signingSecret?: string; dcrEnabled?: boolean } = {},
+    options: {
+      authorizationUrl?: string;
+      signingSecret?: string;
+      dcrEnabled?: boolean;
+      consentExemptRedirectUriPatterns?: readonly string[];
+    } = {},
   ) {
     const authUrl = `${credentials.url}/oauth/authorize`;
     const tokenUrl = `${credentials.url}/oauth/token`;
@@ -116,6 +123,7 @@ export class XsuaaProxyOAuthProvider extends ProxyOAuthServerProvider {
       callbackUrl,
     );
     this.dcrEnabled = options.dcrEnabled !== false;
+    this.consentExemptRedirectUriPatterns = [...(options.consentExemptRedirectUriPatterns ?? [])];
     this.skipLocalPkceValidation = true;
   }
 
@@ -143,8 +151,19 @@ export class XsuaaProxyOAuthProvider extends ProxyOAuthServerProvider {
       res.status(400).json({ error: 'invalid_request', error_description: 'Unregistered redirect_uri' });
       return;
     }
-    const browserBinding = this.consent.approve(_client, params, res);
+    const exempt = matchesRedirectPattern(params.redirectUri, this.consentExemptRedirectUriPatterns);
+    const browserBinding = exempt ? this.consent.bindWithoutApproval(res) : this.consent.approve(_client, params, res);
     if (!browserBinding) return;
+    if (exempt) {
+      this.logger.emitAudit?.({
+        timestamp: new Date().toISOString(),
+        level: 'info',
+        event: 'oauth_consent_exempt',
+        registeredClientId: _client.client_id,
+        clientName: _client.client_name,
+        redirectUriHost: new URL(params.redirectUri).host,
+      });
+    }
     // ── Callback proxy (issue #214) ──────────────────────────────────
     // Instead of sending XSUAA the client's redirect_uri and the client's
     // raw `state`, we send XSUAA this server's OWN /oauth/callback and an
@@ -386,6 +405,15 @@ export interface CreateXsuaaOAuthProviderOptions {
   dcrSigningSecret?: string;
   /** Default-client redirect allowlist; also permits extra DCR custom schemes (see `redirect-uris.ts`). */
   redirectUriPatterns?: readonly string[];
+  /** Optional DCR redirect allowlist; unset keeps the default DCR policy (see `StatelessDcrClientStoreOptions`). */
+  dcrRedirectUriPatterns?: readonly string[];
+  /**
+   * Return addresses that skip the consent page; the callback stays bound to the
+   * starting browser. Default: none. List only addresses no third party can
+   * obtain (loopback, a redirector that only returns to the local client). A
+   * shared hosting domain here reopens silent code delivery to its tenants.
+   */
+  consentExemptRedirectUriPatterns?: readonly string[];
   /** Initial default-client URIs; each must also match redirectUriPatterns at the callback. */
   defaultRedirectUris?: readonly string[];
   /**
@@ -448,6 +476,7 @@ export function createXsuaaOAuthProvider(
     kdfLabel: options.dcrKdfLabel,
     ttlSeconds: options.dcrTtlSeconds,
     redirectUriPatterns: options.redirectUriPatterns,
+    dcrRedirectUriPatterns: options.dcrRedirectUriPatterns,
     defaultRedirectUris: options.defaultRedirectUris,
     logger,
   });
@@ -471,6 +500,7 @@ export function createXsuaaOAuthProvider(
     authorizationUrl: `${appUrl.replace(/\/$/, '')}/authorize`,
     signingSecret: dcrSigningSecret,
     dcrEnabled: options.dcrEnabled,
+    consentExemptRedirectUriPatterns: options.consentExemptRedirectUriPatterns,
   });
 
   logger.info('XSUAA OAuth provider created (stateless DCR + callback proxy)', {

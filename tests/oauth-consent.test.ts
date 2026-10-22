@@ -437,6 +437,55 @@ describe('OAuth proxy client consent', () => {
     expect((await approve(b, flow)).status).toBe(302);
   });
 
+  describe('consentExemptRedirectUriPatterns', () => {
+    const exempt = 'http://127.0.0.1:33418/';
+    const options = { consentExemptRedirectUriPatterns: ['http://127.0.0.1:*/**'] };
+    const register = async (app: express.Express, redirectUri: string) =>
+      (
+        await request(app)
+          .post('/register')
+          .send({ client_name: 'Visual Studio Code', redirect_uris: [redirectUri], token_endpoint_auth_method: 'none' })
+      ).body.client_id as string;
+
+    it('forwards an exempt return address to XSUAA without the consent page and audits the skip', async () => {
+      const { app, logger } = buildApp(options);
+      const clientId = await register(app, exempt);
+      const response = await request(app).get('/authorize').query(authorization(clientId, exempt));
+
+      expect(response.status).toBe(302);
+      expect(new URL(response.headers.location).origin).toBe(credentials.url);
+      expect(responseCookies(response).some((cookie) => cookie.includes('mcp-oauth-state-'))).toBe(true);
+      expect(logger.audit).toContainEqual(
+        expect.objectContaining({ event: 'oauth_consent_exempt', redirectUriHost: '127.0.0.1:33418' }),
+      );
+    });
+
+    it('keeps the callback bound to the starting browser', async () => {
+      const { app } = buildApp(options);
+      const clientId = await register(app, exempt);
+      const started = await request(app).get('/authorize').query(authorization(clientId, exempt));
+      const state = new URL(started.headers.location).searchParams.get('state');
+
+      const elsewhere = await request(app).get('/oauth/callback').query({ state, code: 'upstream-code' });
+      expect(elsewhere.headers.location ?? '').not.toContain('code=');
+      const sameBrowser = await request(app)
+        .get('/oauth/callback')
+        .set('Cookie', responseCookies(started))
+        .query({ state, code: 'upstream-code' });
+      expect(sameBrowser.status).toBe(302);
+      expect(new URL(sameBrowser.headers.location).origin).toBe('http://127.0.0.1:33418');
+    });
+
+    it('still shows the consent page for every other return address', async () => {
+      const { app } = buildApp(options);
+      const redirectUri = 'https://port3000-workspaces-ws-x.eu10.applicationstudio.cloud.sap/callback';
+      const clientId = await register(app, redirectUri);
+      const response = await request(app).get('/authorize').query(authorization(clientId, redirectUri));
+      expect(response.status).toBe(200);
+      expect(response.text).toContain('Approve client access');
+    });
+  });
+
   it('rejects configuration whose callback cannot receive the approval cookie', () => {
     expect(() =>
       createXsuaaOAuthProvider(credentials, appUrl, { callbackUrl: 'https://different.example/oauth/callback' }),

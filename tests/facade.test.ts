@@ -142,6 +142,22 @@ describe('setupHttpAuth — xsuaa mode', () => {
     expect(res.status).toBe(401);
   });
 
+  it('answers 400 invalid_client_metadata for a DCR redirect outside dcrRedirectUriPatterns', async () => {
+    const { app, logger } = freshApp();
+    setupHttpAuth(
+      app,
+      { xsuaa: { credentials: XSUAA_CREDS, appUrl: APP_URL, dcrRedirectUriPatterns: ['http://127.0.0.1:*/**'] } },
+      logger,
+    );
+    const register = (redirect_uris: string[]) =>
+      request(app).post('/register').send({ client_name: 'test', redirect_uris, token_endpoint_auth_method: 'none' });
+
+    const rejected = await register(['https://attacker.example/cb']);
+    expect(rejected.status).toBe(400);
+    expect(rejected.body.error).toBe('invalid_client_metadata');
+    expect((await register(['http://127.0.0.1:33418/'])).status).toBe(201);
+  });
+
   it('logs "XSUAA OAuth proxy enabled"', () => {
     const { logger } = buildXsuaaApp();
     expect(logger.has('info', /XSUAA OAuth proxy enabled/)).toBe(true);

@@ -11,6 +11,7 @@
 export type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/server/auth/clients.js';
 export {
   InsufficientScopeError,
+  InvalidClientMetadataError,
   InvalidGrantError,
   InvalidTokenError,
 } from '@modelcontextprotocol/sdk/server/auth/errors.js';
