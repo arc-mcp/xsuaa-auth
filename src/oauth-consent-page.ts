@@ -21,7 +21,7 @@ body { margin:0; background:var(--page); color:var(--text); font:1rem/1.5 system
 main { max-width:44rem; margin:2rem auto; padding:0 1rem; }
 .card { padding:2rem; border:1px solid var(--line); border-radius:1rem; background:var(--surface); }
 .server { padding-bottom:1.25rem; border-bottom:1px solid var(--line); }
-.eyebrow { margin:0 0 .25rem; color:var(--muted); font-size:.8rem; font-weight:700; letter-spacing:.08em; }
+.eyebrow { margin:0 0 .25rem; color:var(--muted); font-size:.8rem; font-weight:700; letter-spacing:.08em; text-transform:uppercase; }
 .address, code { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; overflow-wrap:anywhere; }
 .address { margin:0; font-weight:600; }
 h1 { margin:1.5rem 0 .5rem; font-size:1.75rem; line-height:1.2; }
@@ -61,7 +61,7 @@ function document(title: string, origin: string, content: string): string {
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${escapeHtml(title)}</title><style>${styles}</style></head>
 <body><main><div class="card">
-<header class="server"><p class="eyebrow">MCP SERVER</p><p class="address" dir="ltr">${escapeHtml(origin)}</p></header>
+<header class="server"><p class="eyebrow">MCP server</p><p class="address" dir="ltr">${escapeHtml(origin)}</p></header>
 ${content}
 </div></main></body></html>`;
 }
@@ -97,7 +97,7 @@ export function renderConsentPage(options: ConsentPageOptions): string {
     `<h1>Approve client access</h1>
 <p>An application wants to connect to this server using your account.</p>
 <section class="client" aria-labelledby="application-heading">
-<h2 id="application-heading">Application name · unverified</h2>
+<h2 id="application-heading">Application name (unverified)</h2>
 <p class="client-name"><bdi>${escapeHtml(clientName)}</bdi></p>
 <p class="hint">This name has not been verified. Check the application where you started this connection.${shortName ? ' Name shortened for display.' : ''}</p>
 </section>
@@ -110,7 +110,7 @@ export function renderConsentPage(options: ConsentPageOptions): string {
 <form method="post" action="${escapeHtml(options.authorizationUrl)}">${inputs}
 <div class="actions"><button type="submit" name="consent_action" value="deny">Deny</button>
 <button class="primary" type="submit" name="consent_action" value="approve">Approve and continue</button></div></form>
-<p class="footer">Next, continue to your organization’s sign-in service. An existing sign-in session may skip the login prompt.</p>
+<p class="footer">After approval, your browser continues to your organization’s sign-in service. An existing sign-in session may skip the login prompt.</p>
 <p class="footer">This request expires after ${options.expiresInSeconds / 60} minutes. If it expires, restart the connection from your MCP client.</p>`,
   );
 }

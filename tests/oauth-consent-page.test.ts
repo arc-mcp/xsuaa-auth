@@ -14,10 +14,12 @@ describe('OAuth consent page presentation', () => {
   it('separates the configured server identity from the self-declared application and full return address', () => {
     const html = renderConsentPage(options);
     expect(html).toContain('<p class="address" dir="ltr">https://server.example</p>');
-    expect(html).toContain('Application name · unverified');
+    expect(html).toContain('Application name (unverified)');
     expect(html).toContain('<bdi>Example desktop client</bdi>');
     expect(html).toContain('client.example/callback?workspace=example&amp;mode=connect');
     expect(html).toContain('Only approve a connection you started');
+    expect(html).toContain('expires after 10 minutes');
+    expect(html).toContain('Check that it belongs to the application');
     expect(html).not.toMatch(/<(?:script|img|iframe|link|a)\b/i);
   });
 

@@ -19,8 +19,7 @@ Keep those responsibilities separate. The renderer must not decide authorization
   `Host` header or client registration metadata.
 - Registered client names are marked unverified; DCR clients supply their own names.
   Names longer than 100 Unicode code points are shortened with an explicit note.
-  No client logos, branding
-  links, fetched images or trusted-publisher badges are shown.
+  No client logos, branding links, fetched images or trusted-publisher badges are shown.
 - The complete browser-normalized return address is visible and wraps instead of
   being truncated. Display normalization never changes the signed redirect value.
   Loopback and application-scheme notes explain routing without vouching for a client.
