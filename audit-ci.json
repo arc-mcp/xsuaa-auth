@@ -5,8 +5,8 @@
     {
       "GHSA-86w9-cpqp-85rv": {
         "active": true,
-        "expiry": "2026-10-21T00:00:00+02:00",
-        "notes": "Temporary acceptance of the unpatched node-forge RSA verification advisory; reviewed Cloud SDK 4.9.1 -> jks-js 1.1.7 -> node-forge 1.4.0 usage. See SECURITY.md. Remove when fixed; reassess on dependency/usage changes or before 21 October 2026. This does not establish non-exploitability."
+        "expiry": "2026-10-28T00:00:00+01:00",
+        "notes": "Temporary acceptance of the unpatched node-forge RSA verification advisory; reviewed Cloud SDK 4.9.1 -> jks-js 1.1.7 -> node-forge 1.4.0 usage. See SECURITY.md. Remove when fixed; reassess on dependency/usage changes or before 28 October 2026. This does not establish non-exploitability."
       }
     }
   ]

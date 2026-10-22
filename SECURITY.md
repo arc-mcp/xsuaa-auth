@@ -50,7 +50,7 @@ Confirmed vulnerabilities receive a [GitHub Security Advisory (GHSA)](https://gi
 
 ## Temporary dependency risk acceptance
 
-Until **21 October 2026, 00:00 Europe/Berlin**, CI and publishing accept only
+Until **28 October 2026, 00:00 Europe/Berlin**, CI and publishing accept only
 [GHSA-86w9-cpqp-85rv](https://github.com/advisories/GHSA-86w9-cpqp-85rv), through
 `@sap-cloud-sdk/connectivity@4.9.1 → jks-js@1.1.7 → node-forge@1.4.0`.
 No patched Forge release is available. Review of this package's destination lookup and the
