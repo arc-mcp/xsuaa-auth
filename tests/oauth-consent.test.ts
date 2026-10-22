@@ -103,7 +103,8 @@ describe('OAuth proxy client consent', () => {
     };
     const page = await request(app).get('/authorize').query(params);
     expect(page.status).toBe(200);
-    expect(page.text).toContain('read, write');
+    expect(page.text).toContain('<code dir="ltr">read</code>');
+    expect(page.text).toContain('<code dir="ltr">write</code>');
     const fields = consentFields(page.text);
     const post = (changes: Record<string, string> = {}) =>
       request(app)
@@ -277,6 +278,11 @@ describe('OAuth proxy client consent', () => {
       const response = await req.send(fields);
       expect(response.status).toBe(403);
       expect(response.headers.location).toBeUndefined();
+      expect(response.text).toContain('<title>Approval expired or invalid</title>');
+      expect(response.text).toContain('start a new connection');
+      expect(response.text).not.toContain('<form');
+      expect(response.headers['cache-control']).toBe('no-store');
+      expect(response.headers['content-security-policy']).toBe(flow.page.headers['content-security-policy']);
     },
   );
 

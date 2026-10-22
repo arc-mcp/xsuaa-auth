@@ -204,8 +204,39 @@ The facade's configuration object. All fields are optional except where noted.
 
 Every authorization request presents an approval page before forwarding to XSUAA,
 including requests from manual clients and previously registered clients. The page
-shows the self-declared client name, actual return address, and requested permissions.
+shows the registered client name, actual return address, and requested permissions.
 An existing identity-provider SSO session does not skip this approval.
+
+The page identifies the server using its configured public origin. The application
+name is explicitly **unverified**; it is not a trusted publisher identity. Dynamically
+registered applications supply their own names. Long names are shortened to 100 Unicode
+code points so they cannot bury the decision details. The full browser-normalized
+return address remains visible, with explanations for local callbacks and application
+URI schemes. Neither a familiar name nor a local address proves an application's identity.
+Scope identifiers belong to the consuming server, so the library does not translate
+arbitrary scopes into permission promises. Without an explicit scope request, the page
+warns that access can include all permissions assigned to the account for that server.
+
+Internationalized callback hosts appear in their ASCII form and path characters may
+be percent-encoded, as in the browser's navigation URL. The original redirect value
+remains unchanged in the signed form submission.
+
+Users choose **Deny** or **Approve and continue**. Approval continues to the configured
+identity provider, which may reuse an SSO session. Denial cancels this authorization
+request; it does not revoke tokens from an earlier connection. An expired or invalid
+request must be restarted from the MCP client in the same browser.
+
+Approval is required for each new authorization flow, **not** each MCP call, transport
+reconnect with a valid token, or refresh-token exchange. A new browser flow can occur
+after signing out, losing cached credentials, an expired/revoked refresh token, or a
+client choosing to authenticate again. There is no fixed reapproval interval and no
+remember-approval or disable-approval setting. Disabling DCR does not disable approval.
+
+The page uses native HTML forms and inline CSS, without JavaScript or external assets.
+It supports keyboard focus, narrow screens, dark mode and forced colors. The error
+page shares the same layout and gives restart guidance without a retry form.
+See [approval page maintenance](docs/consent-page.md) for the design rationale and
+manual accessibility checks.
 
 Approval requires a same-origin form submission bound to a host-only, HttpOnly cookie
 and the exact OAuth request. A separate ten-minute cookie binds the XSUAA callback to

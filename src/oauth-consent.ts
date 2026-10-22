@@ -1,6 +1,7 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { Request, Response } from 'express';
 import type { OAuthClientInformationFull } from './internal/sdk.js';
+import { renderConsentErrorPage, renderConsentPage } from './oauth-consent-page.js';
 
 const FLOW_SECONDS = 600;
 
@@ -15,13 +16,6 @@ export interface AuthorizationParams {
   codeChallenge: string;
   redirectUri: string;
   resource?: URL;
-}
-
-function escapeHtml(value: string): string {
-  return value.replace(/[&<>"']/g, (character) => {
-    const entities: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
-    return entities[character] ?? character;
-  });
 }
 
 function sameValue(left: string, right: string): boolean {
@@ -154,12 +148,7 @@ export class OAuthConsent {
         !sameValue(match[2] ?? '', this.sign(nonce, expires, fields)) ||
         (body?.consent_action !== 'approve' && body?.consent_action !== 'deny')
       ) {
-        res
-          .status(403)
-          .type('html')
-          .send(
-            '<!doctype html><html><body><h1>Approval expired or invalid</h1><p>Restart sign-in from your MCP client.</p></body></html>',
-          );
+        res.status(403).type('html').send(renderConsentErrorPage(this.origin));
         return;
       }
       res.clearCookie(consentCookie, cookieOptions(consentCookie));
@@ -182,22 +171,19 @@ export class OAuthConsent {
     const consentCookie = `${this.consentCookie}-${fields.consent_id}`;
     res.cookie(consentCookie, nonce, { ...cookieOptions(consentCookie), maxAge: FLOW_SECONDS * 1000 });
     fields.consent_proof = `${expires}.${this.sign(nonce, expires, fields)}`;
-    const inputs = Object.entries(fields)
-      .map(([name, value]) => `<input type="hidden" name="${name}" value="${escapeHtml(value)}">`)
-      .join('');
-    const target = new URL(params.redirectUri);
-    const scopeText =
-      params.scopes?.filter(Boolean).join(', ') || 'All permissions assigned to your account for this server';
     res
       .status(200)
       .type('html')
-      .send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Approve client access</title></head><body style="font-family:system-ui,sans-serif;max-width:42rem;margin:3rem auto;padding:0 1rem;line-height:1.5">
-<h1>Approve client access</h1><p><strong>${escapeHtml(client.client_name || 'Unnamed MCP client')}</strong> wants to connect to this server using your account.</p>
-<p>Client names are supplied by the application. Only approve a sign-in you started in an application you trust.</p>
-<h2>Return address</h2><p><strong>${escapeHtml(target.host || target.protocol)}</strong></p><p style="overflow-wrap:anywhere"><code>${escapeHtml(params.redirectUri)}</code></p>
-<h2>Requested permissions</h2><p>${escapeHtml(scopeText)}</p>
-<form method="post" action="${escapeHtml(this.authorizationUrl)}">${inputs}<button type="submit" name="consent_action" value="deny">Deny</button> <button type="submit" name="consent_action" value="approve">Approve and continue</button></form>
-</body></html>`);
+      .send(
+        renderConsentPage({
+          authorizationUrl: this.authorizationUrl,
+          clientName: client.client_name,
+          redirectUri: params.redirectUri,
+          scopes: params.scopes,
+          expiresInSeconds: FLOW_SECONDS,
+          fields,
+        }),
+      );
   }
 
   private sign(nonce: string, expires: number, fields: Record<string, string>): string {
