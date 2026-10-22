@@ -442,4 +442,21 @@ describe('OAuth proxy client consent', () => {
       createXsuaaOAuthProvider(credentials, appUrl, { callbackUrl: 'https://different.example/oauth/callback' }),
     ).toThrow(/share.*origin/);
   });
+
+  it.each(['http://proxy.example', 'http://0.0.0.0:8080'])(
+    'rejects a non-loopback HTTP public URL at startup: %s',
+    (publicUrl) => {
+      expect(() => createXsuaaOAuthProvider(credentials, publicUrl)).toThrow(/secure public origin/);
+    },
+  );
+
+  it.each(['http://localhost:8080', 'http://127.0.0.1:8080'])(
+    'supports a loopback HTTP public URL for development: %s',
+    async (publicUrl) => {
+      const { app } = buildApp({ appUrl: publicUrl });
+      const flow = await begin(app);
+      expect(flow.page.text).toContain(`${publicUrl}/authorize`);
+      expect(flow.page.headers['set-cookie'].join(';')).not.toContain('Secure');
+    },
+  );
 });

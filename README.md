@@ -217,9 +217,30 @@ and Origin headers and advertise the correct public `appUrl`, including its path
 
 Existing client IDs remain valid. Sign-ins in flight during the upgrade must restart:
 legacy unbound state and raw upstream authorization codes are rejected. Existing
-refresh tokens remain usable; if a token may have been stolen, revoke the affected
-XSUAA grant/session. Rotating the DCR signing key alone does not revoke upstream tokens.
+refresh tokens are not invalidated by this upgrade. If exposure is suspected, use
+documented XSUAA incident controls and verify token invalidation independently.
+Rotating the DCR signing key alone does not revoke upstream tokens.
 Disabling DCR blocks new registrations, not existing clients or stolen tokens.
+
+### Upgrading deployments
+
+Provider construction rejects an `appUrl` that is not HTTPS, except HTTP on
+`localhost`, `127.0.0.1` or `[::1]`. The callback must share that public origin.
+Configure the public URL explicitly outside Cloud Foundry; a non-loopback HTTP
+bind address is not a public OAuth URL. Existing API-key or OIDC authentication
+does not remove these requirements when XSUAA is enabled alongside it.
+For HTTP development with the SDK router, use `localhost` or `127.0.0.1`: the
+currently tested SDK rejects an IPv6 HTTP issuer. IPv6 client callback URLs remain supported.
+
+Use the same canonical public origin in every client and browser. Alternate routes
+or custom-domain aliases can lose the host-only approval cookie and require sign-in
+to restart at the configured origin. Proxies must preserve `Cookie`, `Set-Cookie`
+and `Origin`, and must not overwrite the approval page's `Referrer-Policy: origin`.
+
+An ordinary sign-in uses two `/authorize` requests: the approval page and its form
+submission. Both count toward the existing authorization endpoint limit. Account for
+shared-IP traffic without disabling that protection. Upgrade every instance before
+resuming sign-ins; a mixture of old and new OAuth implementations is not supported.
 
 ## Redirect validation
 

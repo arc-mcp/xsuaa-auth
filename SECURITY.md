@@ -4,14 +4,13 @@
 
 ## Supported Versions
 
-Pre-1.0 (current state): only the latest published `0.x` minor line receives security fixes. The API is still settling across the consuming MCP servers, so please track the latest release.
+The latest published `1.x` release receives security fixes. Upgrade older releases to the latest fixed version; consult the advisory for the affected and patched versions of each issue.
 
 | Version | Supported            |
 | ------- | -------------------- |
-| 0.1.x   | :white_check_mark:   |
-| < 0.1   | :x: — please upgrade |
+| Latest 1.x | :white_check_mark: |
+| Older releases | :x: — please upgrade |
 
-After 1.0, this table will reflect the documented support window for each major.
 
 ## Reporting a Vulnerability
 
