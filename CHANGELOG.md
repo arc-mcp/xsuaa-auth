@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.0](https://github.com/arc-mcp/xsuaa-auth/compare/v1.1.1...v1.2.0) (2026-10-23)
+
+
+### Features
+
+* **oauth:** add optional DCR redirect allowlist ([#92](https://github.com/arc-mcp/xsuaa-auth/issues/92)) ([0819530](https://github.com/arc-mcp/xsuaa-auth/commit/081953085dda3d19ce268ad51aca802c99a231aa))
+
+
+### Bug Fixes
+
+* **auth:** clarify client approval and improve accessibility ([#93](https://github.com/arc-mcp/xsuaa-auth/issues/93)) ([442dd14](https://github.com/arc-mcp/xsuaa-auth/commit/442dd14f15d43d4eed05b09144793e091ca724b6))
+
 ## [1.1.1](https://github.com/arc-mcp/xsuaa-auth/compare/v1.1.0...v1.1.1) (2026-10-22)
 
 
