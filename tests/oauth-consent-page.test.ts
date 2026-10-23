@@ -16,6 +16,7 @@ describe('OAuth consent page presentation', () => {
     expect(html).toContain('<p class="address" dir="ltr">https://server.example</p>');
     expect(html).toContain('Application name (unverified)');
     expect(html).toContain('<bdi>Example desktop client</bdi>');
+    expect(html).toContain('<p class="address" dir="ltr">client.example</p>');
     expect(html).toContain('client.example/callback?workspace=example&amp;mode=connect');
     expect(html).toContain('Only approve if you started this connection and trust the app.');
     expect(html).toContain('expires after 10 minutes');
@@ -58,6 +59,7 @@ describe('OAuth consent page presentation', () => {
     (redirectUri) => {
       const html = renderConsentPage({ ...options, redirectUri });
       expect(html).toContain(`<code>${redirectUri}</code>`);
+      expect(html).toContain(`<p class="address" dir="ltr">${new URL(redirectUri).protocol}</p>`);
       expect(html).not.toContain(`<p class="address" dir="ltr">${new URL(redirectUri).host}</p>`);
     },
   );

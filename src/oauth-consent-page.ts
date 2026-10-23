@@ -68,6 +68,7 @@ ${content}
 
 export function renderConsentPage(options: ConsentPageOptions): string {
   const target = new URL(options.redirectUri);
+  const returnLabel = ['https:', 'http:'].includes(target.protocol) ? target.host : target.protocol;
   const name = [...(options.clientName?.trim() || 'Unnamed MCP client')];
   const shortName = name.length > 100;
   const clientName = name.slice(0, 100).join('') + (shortName ? '…' : '');
@@ -89,6 +90,7 @@ ${shortName ? '<p class="hint">Name shortened for display.</p>' : ''}
 </section>
 <section aria-labelledby="permissions-heading"><h2 id="permissions-heading">Requested permissions</h2>${permissions}</section>
 <section aria-labelledby="return-heading"><h2 id="return-heading">Return address</h2>
+<p class="address" dir="ltr">${escapeHtml(returnLabel)}</p>
 <p class="return-url" dir="ltr"><code>${escapeHtml(target.href)}</code></p>
 </section>
 <p><strong>Only approve if you started this connection and trust the app.</strong></p>

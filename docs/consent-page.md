@@ -22,6 +22,8 @@ Keep those responsibilities separate. The renderer must not decide authorization
   No client logos, branding links, fetched images or trusted-publisher badges are shown.
 - The complete browser-normalized return address is visible and wraps instead of
   being truncated. Display normalization never changes the signed redirect value.
+  A separate short line shows the parsed host (or the scheme for application URIs),
+  keeping the destination easy to identify without another explanatory paragraph.
   A loopback address returns to a local app; an application URI scheme opens its
   registered handler. Neither address type verifies the application's identity.
   These explanations stay in documentation to keep the decision page concise.
