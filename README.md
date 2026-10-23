@@ -211,8 +211,9 @@ The page identifies the server using its configured public origin. The applicati
 name is explicitly **unverified**; it is not a trusted publisher identity. Dynamically
 registered applications supply their own names. Long names are shortened to 100 Unicode
 code points so they cannot bury the decision details. The full browser-normalized
-return address remains visible, with explanations for local callbacks and application
-URI schemes. Neither a familiar name nor a local address proves an application's identity.
+return address remains visible. Neither a familiar name nor a local address proves an
+application's identity. The page keeps decision details and a brief trust warning visible;
+longer explanations live in this documentation.
 Scope identifiers belong to the consuming server, so the library does not translate
 arbitrary scopes into permission promises. Without an explicit scope request, the page
 warns that access can include all permissions assigned to the account for that server.

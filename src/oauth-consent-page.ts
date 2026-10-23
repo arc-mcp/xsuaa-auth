@@ -66,28 +66,15 @@ ${content}
 </div></main></body></html>`;
 }
 
-function returnAddressHint(target: URL): string {
-  if (target.protocol !== 'https:' && target.protocol !== 'http:') {
-    return 'This address opens an application on your device. The address alone does not verify which application handles it.';
-  }
-  if (['localhost', '127.0.0.1', '[::1]'].includes(target.hostname)) {
-    return 'This address returns to an application on your device. A local address does not verify which application is listening.';
-  }
-  return 'After sign-in, or if you deny, your browser returns to this address. Check that it belongs to the application you intended to connect.';
-}
-
 export function renderConsentPage(options: ConsentPageOptions): string {
   const target = new URL(options.redirectUri);
-  const returnLabel = ['https:', 'http:'].includes(target.protocol) ? target.host : target.protocol;
   const name = [...(options.clientName?.trim() || 'Unnamed MCP client')];
   const shortName = name.length > 100;
   const clientName = name.slice(0, 100).join('') + (shortName ? '…' : '');
   const scopes = options.scopes?.filter(Boolean);
   const permissions = scopes?.length
-    ? `<ul class="permissions">${scopes.map((scope) => `<li class="value"><code dir="ltr">${escapeHtml(scope)}</code></li>`).join('')}</ul>
-<p class="hint">These permission names are defined by this server. Your account permissions still apply.</p>`
-    : `<p>All permissions assigned to your account for this server</p>
-<p class="hint">The application did not request a narrower set of permissions.</p>`;
+    ? `<ul class="permissions">${scopes.map((scope) => `<li class="value"><code dir="ltr">${escapeHtml(scope)}</code></li>`).join('')}</ul>`
+    : '<p>All your permissions on this server</p>';
   const inputs = Object.entries(options.fields)
     .map(([name, value]) => `<input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(value)}">`)
     .join('');
@@ -95,23 +82,20 @@ export function renderConsentPage(options: ConsentPageOptions): string {
     'Approve client access',
     new URL(options.authorizationUrl).origin,
     `<h1>Approve client access</h1>
-<p>An application wants to connect to this server using your account.</p>
 <section class="client" aria-labelledby="application-heading">
 <h2 id="application-heading">Application name (unverified)</h2>
 <p class="client-name"><bdi>${escapeHtml(clientName)}</bdi></p>
-<p class="hint">This name has not been verified. Check the application where you started this connection.${shortName ? ' Name shortened for display.' : ''}</p>
+${shortName ? '<p class="hint">Name shortened for display.</p>' : ''}
 </section>
 <section aria-labelledby="permissions-heading"><h2 id="permissions-heading">Requested permissions</h2>${permissions}</section>
 <section aria-labelledby="return-heading"><h2 id="return-heading">Return address</h2>
-<p class="address" dir="ltr">${escapeHtml(returnLabel)}</p>
 <p class="return-url" dir="ltr"><code>${escapeHtml(target.href)}</code></p>
-<p class="hint">${returnAddressHint(target)}</p></section>
-<p><strong>Only approve a connection you started in an application you trust.</strong> Otherwise, choose Deny.</p>
+</section>
+<p><strong>Only approve if you started this connection and trust the app.</strong></p>
 <form method="post" action="${escapeHtml(options.authorizationUrl)}">${inputs}
 <div class="actions"><button type="submit" name="consent_action" value="deny">Deny</button>
 <button class="primary" type="submit" name="consent_action" value="approve">Approve and continue</button></div></form>
-<p class="footer">After approval, your browser continues to your organization’s sign-in service. An existing sign-in session may skip the login prompt.</p>
-<p class="footer">This request expires after ${options.expiresInSeconds / 60} minutes. If it expires, restart the connection from your MCP client.</p>`,
+<p class="footer">Request expires after ${options.expiresInSeconds / 60} minutes.</p>`,
   );
 }
 
@@ -120,8 +104,7 @@ export function renderConsentErrorPage(origin: string): string {
     'Approval expired or invalid',
     origin,
     `<h1>Approval expired or invalid</h1>
-<p>This sign-in request could not be approved. No access was approved by this attempt.</p>
-<p>Return to your MCP client and start a new connection. Complete approval and sign-in in the same browser.</p>
-<p class="hint">If this keeps happening, ask your server administrator to check the public URL and browser cookie settings.</p>`,
+<p>No access was approved by this attempt.</p>
+<p>Return to your MCP client and start a new connection in the same browser.</p>`,
   );
 }

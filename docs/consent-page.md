@@ -22,7 +22,9 @@ Keep those responsibilities separate. The renderer must not decide authorization
   No client logos, branding links, fetched images or trusted-publisher badges are shown.
 - The complete browser-normalized return address is visible and wraps instead of
   being truncated. Display normalization never changes the signed redirect value.
-  Loopback and application-scheme notes explain routing without vouching for a client.
+  A loopback address returns to a local app; an application URI scheme opens its
+  registered handler. Neither address type verifies the application's identity.
+  These explanations stay in documentation to keep the decision page concise.
 - Scope names are displayed literally. Their meaning belongs to the consuming
   server. Do not equate a name such as `read` with read-only access in arbitrary apps.
   An omitted scope request must not look like a request for no permissions.
@@ -54,7 +56,7 @@ on the opener. Keep CSP, frame denial and no-store protections intact.
 Run `npm test`, `npm run typecheck`, `npm run lint`, `npm run build` and
 `npm run check:exports`. The library suites cover actual form field round-trips,
 headers, approval/denial, browser binding, scoped/manual clients and refresh behavior.
-The renderer suite covers identity separation, scope text, callback explanations,
+The renderer suite covers identity separation, scope text, complete callback addresses,
 long values, escaping, form order and the invalid-request page.
 
 For a local synthetic preview using the built renderer, check:

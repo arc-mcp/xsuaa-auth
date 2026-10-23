@@ -17,9 +17,8 @@ describe('OAuth consent page presentation', () => {
     expect(html).toContain('Application name (unverified)');
     expect(html).toContain('<bdi>Example desktop client</bdi>');
     expect(html).toContain('client.example/callback?workspace=example&amp;mode=connect');
-    expect(html).toContain('Only approve a connection you started');
+    expect(html).toContain('Only approve if you started this connection and trust the app.');
     expect(html).toContain('expires after 10 minutes');
-    expect(html).toContain('Check that it belongs to the application');
     expect(html).not.toMatch(/<(?:script|img|iframe|link|a)\b/i);
   });
 
@@ -34,8 +33,7 @@ describe('OAuth consent page presentation', () => {
   it('explains unspecified permissions without implying read-only access', () => {
     for (const scopes of [undefined, [], ['']]) {
       const html = renderConsentPage({ ...options, scopes });
-      expect(html).toContain('All permissions assigned to your account for this server');
-      expect(html).toContain('did not request a narrower set');
+      expect(html).toContain('All your permissions on this server');
       expect(html).not.toContain('read-only');
     }
   });
@@ -44,26 +42,23 @@ describe('OAuth consent page presentation', () => {
     const html = renderConsentPage({ ...options, scopes: ['inventory.inspect', 'orders.submit'] });
     expect(html).toContain('<code dir="ltr">inventory.inspect</code>');
     expect(html).toContain('<code dir="ltr">orders.submit</code>');
-    expect(html).toContain('permission names are defined by this server');
-    expect(html).not.toContain('All permissions assigned');
+    expect(html).not.toContain('All your permissions');
   });
 
   it.each(['http://localhost:6274/cb', 'http://127.0.0.1:6274/cb', 'http://[::1]:6274/cb'])(
-    'explains local return addresses without treating them as verified: %s',
+    'shows the complete local return address: %s',
     (redirectUri) => {
       const html = renderConsentPage({ ...options, redirectUri });
-      expect(html).toContain(redirectUri);
-      expect(html).toContain('A local address does not verify which application is listening.');
+      expect(html).toContain(`<code>${redirectUri}</code>`);
     },
   );
 
   it.each(['vscode://vscode.microsoft-authentication/cb', 'cursor://anysphere.cursor-mcp/cb'])(
-    'explains application URI schemes: %s',
+    'shows the complete application URI without presenting its authority as a website: %s',
     (redirectUri) => {
       const html = renderConsentPage({ ...options, redirectUri });
-      expect(html).toContain(redirectUri);
-      expect(html).toContain('does not verify which application handles it');
-      expect(html).toContain(`<p class="address" dir="ltr">${new URL(redirectUri).protocol}</p>`);
+      expect(html).toContain(`<code>${redirectUri}</code>`);
+      expect(html).not.toContain(`<p class="address" dir="ltr">${new URL(redirectUri).host}</p>`);
     },
   );
 
