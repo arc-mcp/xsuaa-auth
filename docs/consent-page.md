@@ -35,7 +35,7 @@ Keep those responsibilities separate. The renderer must not decide authorization
 - Deny comes first in DOM and keyboard order. Neither action receives autofocus.
   The error document has no retry form that could resubmit expired request data.
 
-The [MCP authorization specification](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/docs/specification/2025-06-18/basic/authorization.mdx)
+The [MCP authorization specification](https://modelcontextprotocol.io/docs/draft/tutorials/security/security_best_practices#mitigation)
 requires client consent before a proxy forwards dynamically registered clients to an
 upstream authorization server. Clear presentation supports this boundary; styling
 must never replace request validation or introduce automatic approval.

@@ -216,7 +216,7 @@ application's identity. The page keeps decision details and a brief trust warnin
 longer explanations live in this documentation.
 Scope identifiers belong to the consuming server, so the library does not translate
 arbitrary scopes into permission promises. Without an explicit scope request, the page
-warns that access can include all permissions assigned to the account for that server.
+states that access can include all permissions assigned to the account for that server.
 
 Internationalized callback hosts appear in their ASCII form and path characters may
 be percent-encoded, as in the browser's navigation URL. The original redirect value
@@ -236,7 +236,7 @@ remember-approval or disable-approval setting. Disabling DCR does not disable ap
 The page uses native HTML forms and inline CSS, without JavaScript or external assets.
 It supports keyboard focus, narrow screens, dark mode and forced colors. The error
 page shares the same layout and gives restart guidance without a retry form.
-See [approval page maintenance](docs/consent-page.md) for the design rationale and
+See [approval page maintenance](https://github.com/arc-mcp/xsuaa-auth/blob/main/docs/consent-page.md) for the design rationale and
 manual accessibility checks.
 
 Approval requires a same-origin form submission bound to a host-only, HttpOnly cookie
