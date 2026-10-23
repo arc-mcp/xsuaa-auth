@@ -65,7 +65,8 @@ if (process.env.VCAP_SERVICES) {
     resourceName: 'Example MCP Server',
     // Narrow `redirectUriPatterns` and `defaultRedirectUris` together for the
     // pre-registered client. DCR uses its own scheme policy and exact URI matching;
-    // these patterns do not restrict DCR HTTPS domains (README: Redirect validation).
+    // these patterns do not restrict DCR HTTPS domains. To restrict those too,
+    // set dcrRedirectUriPatterns (README: Redirect validation). Approval stays mandatory.
   };
 }
 

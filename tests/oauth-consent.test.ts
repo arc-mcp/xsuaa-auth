@@ -446,14 +446,75 @@ describe('OAuth proxy client consent', () => {
       expect(flow.cookies.some((cookie) => cookie.includes('mcp-oauth-state-'))).toBe(false);
       const denied = await approve(app, flow, { consent_action: 'deny' });
       expect(denied.status).toBe(303);
-      expect(new URL(denied.headers.location).searchParams.get('error')).toBe('access_denied');
+      const deniedTarget = new URL(denied.headers.location);
+      expect(deniedTarget.searchParams.get('error')).toBe('access_denied');
+      expect(deniedTarget.searchParams.get('state')).toBe(flow.params.state);
+      deniedTarget.search = '';
+      expect(deniedTarget.href).toBe(redirectUri);
       const next = await begin(app, redirectUri, 'Allowed client');
       const approved = await approve(app, next);
       expect(approved.status).toBe(302);
       expect(new URL(approved.headers.location).origin).toBe(credentials.url);
       expect(responseCookies(approved).some((cookie) => cookie.includes('mcp-oauth-state-'))).toBe(true);
+      const { app: secondInstance } = buildApp({ dcrRedirectUriPatterns: [redirectUri] });
+      const callback = await request(secondInstance)
+        .get('/oauth/callback')
+        .set('Cookie', responseCookies(approved))
+        .query({ state: new URL(approved.headers.location).searchParams.get('state'), code: 'approved-code' });
+      expect(callback.status).toBe(302);
+      const target = new URL(callback.headers.location);
+      expect(target.searchParams.get('state')).toBe(next.params.state);
+      const exchange = vi.fn(async (_url: string, init: RequestInit) => {
+        const fields = new URLSearchParams(init.body as string);
+        expect(fields.get('code')).toBe('approved-code');
+        expect(fields.get('code_verifier')).toBe(verifier);
+        expect(fields.get('redirect_uri')).toBe(`${appUrl}/oauth/callback`);
+        return new Response(JSON.stringify({ access_token: 'synthetic-access', token_type: 'bearer' }));
+      });
+      vi.stubGlobal('fetch', exchange);
+      const token = await request(secondInstance)
+        .post('/token')
+        .type('form')
+        .send({
+          grant_type: 'authorization_code',
+          client_id: next.registration.body.client_id,
+          code: target.searchParams.get('code'),
+          code_verifier: verifier,
+          redirect_uri: redirectUri,
+        });
+      expect(token.status).toBe(200);
+      expect(token.body.access_token).toBe('synthetic-access');
+      expect(exchange).toHaveBeenCalledOnce();
     },
   );
+
+  it('applies a narrowed policy to earlier registrations before rendering approval', async () => {
+    const { app: original } = buildApp();
+    const flow = await begin(original);
+    const { app: restricted } = buildApp({ dcrRedirectUriPatterns: ['https://other-client.example/cb'] });
+    const response = await request(restricted).get('/authorize').query(flow.params);
+    expect(response.status).toBe(400);
+    expect(response.body.error).toBe('invalid_request');
+    expect(response.headers.location).toBeUndefined();
+    expect(response.headers['set-cookie']).toBeUndefined();
+  });
+
+  it('refuses an in-flight callback after another instance narrows the allowed return addresses', async () => {
+    const { app: original } = buildApp();
+    const flow = await begin(original);
+    const approved = await approve(original, flow);
+    expect(approved.status).toBe(302);
+    const { app: restricted } = buildApp({ dcrRedirectUriPatterns: [] });
+    const exchange = vi.fn();
+    vi.stubGlobal('fetch', exchange);
+    const response = await request(restricted)
+      .get('/oauth/callback')
+      .set('Cookie', responseCookies(approved))
+      .query({ state: new URL(approved.headers.location).searchParams.get('state'), code: 'approved-code' });
+    expect(response.status).toBe(400);
+    expect(response.headers.location).toBeUndefined();
+    expect(exchange).not.toHaveBeenCalled();
+  });
 
   it('rejects configuration whose callback cannot receive the approval cookie', () => {
     expect(() =>

@@ -305,6 +305,8 @@ describe('StatelessDcrClientStore dcrRedirectUriPatterns', () => {
     expect((await store.getClient(earlier.client_id))?.redirect_uris).toEqual(['http://127.0.0.1:33418/']);
     expect(await store.checkRedirectUri(earlier.client_id, 'https://attacker.example/cb')).toBe('unregistered');
     expect(await store.checkRedirectUri(earlier.client_id, 'http://127.0.0.1:33418/')).toBe('ok');
+    // Filtering does not rewrite the signed registration or permanently revoke it.
+    expect(await makeStore().checkRedirectUri(earlier.client_id, 'https://attacker.example/cb')).toBe('ok');
   });
 
   it('rejects every DCR redirect when the allowlist is empty, and keeps the default policy when unset', async () => {
@@ -357,6 +359,30 @@ describe('StatelessDcrClientStore dcrRedirectUriPatterns', () => {
   it('does not change the default client policy', async () => {
     const store = makeStore({ dcrRedirectUriPatterns: [] });
     expect(await store.checkRedirectUri(XSUAA_ID, 'http://localhost:6274/oauth/callback')).toBe('ok');
+  });
+
+  it.each([
+    'https://test-user:test-password@client.example/cb',
+    'https://test-user@client.example/cb',
+    'cursor://test-user:test-password@anysphere.cursor-mcp/cb',
+  ])('rejects redirect credentials without disclosing them in audits: %s', async (uri) => {
+    for (const patterns of [undefined, ['https://client.example/cb', 'cursor://anysphere.cursor-mcp/**']]) {
+      const logger = makeCapturingLogger();
+      const store = makeStore({ dcrRedirectUriPatterns: patterns, logger });
+      await expect(store.registerClient({ redirect_uris: [uri] })).rejects.toMatchObject({
+        errorCode: 'invalid_client_metadata',
+      });
+      expect(logger.audit).toContainEqual(
+        expect.objectContaining({
+          event: 'oauth_client_registration_rejected',
+          reason: 'invalid_redirect_uri',
+        }),
+      );
+      const audit = JSON.stringify(logger.audit);
+      expect(audit).not.toContain('test-user');
+      expect(audit).not.toContain('test-password');
+      expect(audit).not.toContain(uri);
+    }
   });
 });
 

@@ -140,11 +140,12 @@ export interface StatelessDcrClientStoreOptions {
   /**
    * Optional allowlist for DCR redirect URIs, using the same glob syntax as
    * `redirectUriPatterns`, but with case-sensitive paths and queries. When set,
-   * registration rejects every redirect_uri
-   * that does not match (HTTP 400 `invalid_client_metadata`), and a URI in an
-   * earlier stateless registration that no longer matches is dropped from the
-   * client, so narrowing the list also applies to existing client_ids. An empty
-   * array rejects every DCR redirect. Default: unset (no additional restriction).
+   * the whole registration fails if any redirect URI does not match (HTTP 400
+   * `invalid_client_metadata`). This only narrows the base scheme policy and
+   * does not cover the pre-registered default client. Earlier client IDs are
+   * filtered at lookup; widening the list restores previously excluded URIs.
+   * An empty array rejects every DCR redirect but leaves /register mounted.
+   * Default: unset (no additional restriction). Approval is always required.
    */
   dcrRedirectUriPatterns?: readonly string[];
 
@@ -387,7 +388,8 @@ export class StatelessDcrClientStore implements OAuthRegisteredClientsStore {
    *    stateless and identical on every instance — a code is never forwarded to
    *    an unlisted URI even if `/authorize` ran on a different instance.
    *  - DCR (`mcp-…`) client → must be one of the redirect_uris baked immutably
-   *    into the signed client_id (re-derived by `getClient`). Returns
+   *    into the signed client_id and still allowed by `dcrRedirectUriPatterns`
+   *    (re-derived by `getClient`). Returns
    *    `unknown_client` when the id is unrecognised / expired / forged.
    */
   async checkRedirectUri(clientId: string, uri: string): Promise<'ok' | 'unknown_client' | 'unregistered'> {

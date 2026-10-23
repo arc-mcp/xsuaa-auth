@@ -14,6 +14,32 @@ import {
   XSUAA_DEFAULT_REDIRECT_URI_PATTERNS,
   XSUAA_DEFAULT_REDIRECT_URIS,
 } from '../src/index.js';
+import { matchesDcrRedirectPattern } from '../src/redirect-uris.js';
+
+describe('DCR redirect pattern matching', () => {
+  it.each([
+    ['cursor://anysphere.cursor-mcp/Callback', 'cursor://anysphere.cursor-mcp/**'],
+    ['http://[::1]:39001/cb', 'http://[::1]:*/**'],
+    ['https://workspace.example/Callback?mode=Read', 'HTTPS://*.EXAMPLE/Callback?mode=Read'],
+  ])('accepts a supported address %s under %s', (uri, pattern) => {
+    expect(matchesDcrRedirectPattern(uri, [pattern])).toBe(true);
+  });
+
+  it.each([
+    '',
+    'not a URI',
+    'https://other.example/cb',
+    'https://client.example/CB',
+    'https://client.example/cb#section',
+  ])('refuses a missing, invalid or non-matching address: %s', (uri) => {
+    expect(matchesDcrRedirectPattern(uri, ['https://client.example/cb'])).toBe(false);
+  });
+
+  it('treats an empty list or an empty pattern as matching no address', () => {
+    expect(matchesDcrRedirectPattern('https://client.example/cb', [])).toBe(false);
+    expect(matchesDcrRedirectPattern('https://client.example/cb', [''])).toBe(false);
+  });
+});
 
 describe('matchesRedirectPattern (redirect-uri allowlist for the shared XSUAA client)', () => {
   it('accepts URIs covered by the shipped default patterns', () => {

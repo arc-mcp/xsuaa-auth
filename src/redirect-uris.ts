@@ -37,6 +37,7 @@ export const XSUAA_DEFAULT_REDIRECT_URIS = [
  *   so those client URIs belong only here. Keep patterns narrow.
  * DCR separately uses validateRedirectUri() at registration and exact URI
  * matching at the callback; these patterns only add extra DCR custom schemes.
+ * The separate dcrRedirectUriPatterns option can further restrict DCR redirects.
  *
  * Glob semantics: `*` stays within a host/path segment; `**` can cross segments.
  */
