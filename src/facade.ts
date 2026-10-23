@@ -51,8 +51,6 @@ export interface AuthOptions {
     redirectUriPatterns?: readonly string[];
     /** Optional DCR redirect allowlist; registrations and earlier client_ids are limited to matching URIs. */
     dcrRedirectUriPatterns?: readonly string[];
-    /** Return addresses that skip the consent page; see `CreateXsuaaOAuthProviderOptions`. Default: none. */
-    consentExemptRedirectUriPatterns?: readonly string[];
     /** Initial default-client URIs; each must also match redirectUriPatterns at the callback. */
     defaultRedirectUris?: readonly string[];
     dcrTtlSeconds?: number;
@@ -177,7 +175,6 @@ export function setupHttpAuth(
       dcrSigningSecret: xsuaa.dcrSigningSecret,
       redirectUriPatterns: xsuaa.redirectUriPatterns,
       dcrRedirectUriPatterns: xsuaa.dcrRedirectUriPatterns,
-      consentExemptRedirectUriPatterns: xsuaa.consentExemptRedirectUriPatterns,
       defaultRedirectUris: xsuaa.defaultRedirectUris,
       callbackUrl: xsuaa.callbackUrl,
       logger,

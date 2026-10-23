@@ -57,7 +57,7 @@ export const XSUAA_DEFAULT_REDIRECT_URI_PATTERNS = [
  *  segment); every other character is matched literally. The trailing `/` and
  *  anchoring mean a host-label `*` (e.g. `*.hana.ondemand.com`) cannot be widened
  *  to a different registrable domain. */
-function redirectPatternToRegExp(pattern: string): RegExp {
+function redirectPatternToRegExp(pattern: string, caseSensitive = false): RegExp {
   // Split on the wildcard tokens, keeping them (the capturing group keeps the
   // delimiters in the result array). `**` is tried before `*`, so it tokenizes
   // as a single token.
@@ -69,7 +69,7 @@ function redirectPatternToRegExp(pattern: string): RegExp {
       return segment.replace(/[.+?^${}()|[\]\\]/g, '\\$&'); // escape literal regex metachars
     })
     .join('');
-  return new RegExp(`^${body}$`, 'i');
+  return new RegExp(`^${body}$`, caseSensitive ? '' : 'i');
 }
 
 /**
@@ -117,7 +117,27 @@ export function matchesRedirectPattern(
   // `hostname`) preserves any `:port` the localhost pattern depends on; lowercasing
   // matches the case-insensitive regex and the case-insensitive nature of hosts.
   const canonical = `${parsed.protocol}//${parsed.host.toLowerCase()}${parsed.pathname}${parsed.search}`;
-  return patterns.map(redirectPatternToRegExp).some((re) => re.test(canonical));
+  return patterns.some((pattern) => redirectPatternToRegExp(pattern).test(canonical));
+}
+
+/** DCR admission policy: host/scheme are case-insensitive, path/query are not.
+ * Authorization and callback still require the exact registered URI. */
+export function matchesDcrRedirectPattern(uri: string, patterns: readonly string[]): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(uri);
+  } catch {
+    return false;
+  }
+  if (parsed.username || parsed.password || parsed.hash || uri.includes('#')) return false;
+  const canonical = `${parsed.protocol}//${parsed.host.toLowerCase()}${parsed.pathname}${parsed.search}`;
+  return patterns.some((pattern) => {
+    const normalized = pattern.replace(
+      /^([^:]+:\/\/[^/]+)(.*)$/,
+      (_match, authority: string, rest: string) => authority.toLowerCase() + rest,
+    );
+    return redirectPatternToRegExp(normalized, true).test(canonical);
+  });
 }
 
 /**

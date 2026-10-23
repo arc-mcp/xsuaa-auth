@@ -188,7 +188,6 @@ The facade's configuration object. All fields are optional except where noted.
 | `xsuaa.requiredScopes` | `string[]` | — | Enforced via the SDK's `requireBearerAuth({ requiredScopes })`. |
 | `xsuaa.redirectUriPatterns` | `readonly string[]` | `XSUAA_DEFAULT_REDIRECT_URI_PATTERNS` | Redirect allowlist for the pre-registered default client; also permits extra DCR custom schemes. See [Redirect validation](#redirect-validation). |
 | `xsuaa.dcrRedirectUriPatterns` | `readonly string[]` | unset | Optional allowlist for DCR redirect URIs. Registration rejects non-matching URIs; earlier client_ids keep only matching URIs. `[]` rejects every DCR redirect. See [Redirect validation](#redirect-validation). |
-| `xsuaa.consentExemptRedirectUriPatterns` | `readonly string[]` | none | Return addresses that skip the consent page; the callback stays bound to the starting browser and each skip is audited (`oauth_consent_exempt`). List only addresses no third party can obtain, such as loopback or `https://vscode.dev/redirect`; a shared hosting domain here reopens silent code delivery to its tenants. |
 | `xsuaa.defaultRedirectUris` | `readonly string[]` | `XSUAA_DEFAULT_REDIRECT_URIS` | Initial URIs for the default client; each must also match `redirectUriPatterns` at the callback. Narrow both lists together. |
 | `xsuaa.dcrEnabled` | `boolean` | `true` | Set `false` to remove `/register` and its discovery metadata. Existing registrations and manual clients remain usable, with browser approval. |
 | `xsuaa.dcrTtlSeconds` | `number` | `2592000` (30d) | DCR `client_id` lifetime. `0` disables expiry (recommended for clients that don't auto-re-register on `invalid_client`). |
@@ -254,16 +253,17 @@ DCR registration separately accepts HTTPS, loopback HTTP and the known schemes
 `claude:`, `cursor:`, `vscode:` and `vscode-insiders:`; patterns can permit extra
 custom schemes. DCR callbacks must exactly match a URI in the signed registration.
 Narrowing the patterns does **not** restrict DCR HTTPS domains or known schemes.
-To restrict them, set `dcrRedirectUriPatterns` (same glob syntax): registration then
+To restrict them, set `dcrRedirectUriPatterns` (same glob syntax, with case-sensitive
+paths and queries): registration then
 rejects every redirect URI that does not match with HTTP 400 `invalid_client_metadata`,
 and URIs in earlier stateless registrations that no longer match are dropped from the
 client, so narrowing the list also applies to existing client_ids. An empty array
 rejects every DCR redirect; unset keeps the default policy.
 
-Every authorization shows a consent page unless its return address matches
-`consentExemptRedirectUriPatterns` (default: none). Exempt flows still bind the
-callback to the browser that started them. Only exempt addresses that a third party
-cannot obtain: loopback, or a redirector that only returns to the local client.
+Every authorization still requires explicit client approval, including loopback and
+VS Code return addresses. The allowlist restricts where a client may return; it does
+not establish the client's identity or the user's consent. It does not revoke
+already-issued access or refresh tokens. Keep this policy identical on every instance.
 Client custom schemes belong in this package's configuration, not `xs-security.json`.
 
 ---

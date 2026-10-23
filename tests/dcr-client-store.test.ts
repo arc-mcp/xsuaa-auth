@@ -189,10 +189,12 @@ describe('StatelessDcrClientStore', () => {
 
   it('encodes and rejects redirect URIs per the allowlist policy', async () => {
     const store = makeStore();
-    await expect(store.registerClient({ redirect_uris: ['javascript:alert(1)'] })).rejects.toThrow(/javascript:/);
-    await expect(store.registerClient({ redirect_uris: ['http://evil.example.com/cb'] })).rejects.toThrow(
-      /http:\/\/ is only allowed/,
-    );
+    await expect(store.registerClient({ redirect_uris: ['javascript:alert(1)'] })).rejects.toMatchObject({
+      errorCode: 'invalid_client_metadata',
+    });
+    await expect(store.registerClient({ redirect_uris: ['http://evil.example.com/cb'] })).rejects.toMatchObject({
+      errorCode: 'invalid_client_metadata',
+    });
 
     await expect(store.registerClient({ redirect_uris: ['http://localhost:1234/cb'] })).resolves.toBeDefined();
     await expect(store.registerClient({ redirect_uris: ['cursor://cb'] })).resolves.toBeDefined();
@@ -311,6 +313,46 @@ describe('StatelessDcrClientStore dcrRedirectUriPatterns', () => {
     ).rejects.toMatchObject({ errorCode: 'invalid_client_metadata' });
     await expect(makeStore().registerClient({ redirect_uris: ['https://attacker.example/cb'] })).resolves.toBeDefined();
   });
+
+  it('matches hosts without regard to case while preserving path and query case', async () => {
+    const store = makeStore({ dcrRedirectUriPatterns: ['HTTPS://CLIENT.EXAMPLE/Callback?tenant=Dev'] });
+    const uri = 'https://client.example/Callback?tenant=Dev';
+    const registered = await store.registerClient({ redirect_uris: [uri] });
+    expect(await store.checkRedirectUri(registered.client_id, uri)).toBe('ok');
+    for (const redirect of [
+      'https://client.example/callback?tenant=Dev',
+      'https://client.example/Callback?tenant=dev',
+    ]) {
+      await expect(store.registerClient({ redirect_uris: [redirect] })).rejects.toMatchObject({
+        errorCode: 'invalid_client_metadata',
+      });
+    }
+  });
+
+  it('copies the configured policy instead of retaining a mutable array', async () => {
+    const patterns = ['https://client.example/cb'];
+    const store = makeStore({ dcrRedirectUriPatterns: patterns });
+    patterns.length = 0;
+    await expect(store.registerClient({ redirect_uris: ['https://client.example/cb'] })).resolves.toBeDefined();
+  });
+
+  it.each(['not a URI', 'http://client.example/cb', 'https://client.example/cb#section', 'https://client.example/cb#'])(
+    'reports invalid redirect metadata without logging the submitted URL: %s',
+    async (uri) => {
+      const logger = makeCapturingLogger();
+      const store = makeStore({ logger });
+      await expect(store.registerClient({ redirect_uris: [uri] })).rejects.toMatchObject({
+        errorCode: 'invalid_client_metadata',
+      });
+      expect(logger.audit).toContainEqual(
+        expect.objectContaining({
+          event: 'oauth_client_registration_rejected',
+          reason: 'invalid_redirect_uri',
+        }),
+      );
+      expect(JSON.stringify(logger.audit)).not.toContain(uri);
+    },
+  );
 
   it('does not change the default client policy', async () => {
     const store = makeStore({ dcrRedirectUriPatterns: [] });

@@ -43,6 +43,7 @@ import {
 import type { Logger } from './logger.js';
 import { noopLogger } from './logger.js';
 import {
+  matchesDcrRedirectPattern,
   matchesRedirectPattern,
   validateRedirectUri,
   XSUAA_DEFAULT_REDIRECT_URI_PATTERNS,
@@ -138,7 +139,8 @@ export interface StatelessDcrClientStoreOptions {
 
   /**
    * Optional allowlist for DCR redirect URIs, using the same glob syntax as
-   * `redirectUriPatterns`. When set, registration rejects every redirect_uri
+   * `redirectUriPatterns`, but with case-sensitive paths and queries. When set,
+   * registration rejects every redirect_uri
    * that does not match (HTTP 400 `invalid_client_metadata`), and a URI in an
    * earlier stateless registration that no longer matches is dropped from the
    * client, so narrowing the list also applies to existing client_ids. An empty
@@ -246,15 +248,24 @@ export class StatelessDcrClientStore implements OAuthRegisteredClientsStore {
   ): Promise<OAuthClientInformationFull> {
     if (client.redirect_uris) {
       for (const uri of client.redirect_uris) {
-        validateRedirectUri(uri, this.redirectUriPatterns);
-        if (!this.isAllowedDcrRedirect(uri)) {
+        let parsed: URL | undefined;
+        let reason: 'invalid_redirect_uri' | 'redirect_uri_not_allowlisted' | undefined;
+        try {
+          parsed = new URL(uri);
+          validateRedirectUri(uri, this.redirectUriPatterns);
+          if (parsed.username || parsed.password || uri.includes('#')) reason = 'invalid_redirect_uri';
+        } catch {
+          reason = 'invalid_redirect_uri';
+        }
+        if (!reason && !this.isAllowedDcrRedirect(uri)) reason = 'redirect_uri_not_allowlisted';
+        if (reason) {
           this.logger.emitAudit?.({
             timestamp: new Date().toISOString(),
             level: 'warn',
             event: 'oauth_client_registration_rejected',
             clientName: client.client_name,
-            redirectUriHost: new URL(uri).host,
-            reason: 'redirect_uri_not_allowlisted',
+            redirectUriHost: parsed?.host,
+            reason,
           });
           throw new InvalidClientMetadataError('redirect_uri is not allowed for dynamic client registration');
         }
@@ -391,7 +402,7 @@ export class StatelessDcrClientStore implements OAuthRegisteredClientsStore {
   // ── Internals: encode / decode / sign / verify ──
 
   private isAllowedDcrRedirect(uri: string): boolean {
-    return this.dcrRedirectUriPatterns === undefined || matchesRedirectPattern(uri, this.dcrRedirectUriPatterns);
+    return this.dcrRedirectUriPatterns === undefined || matchesDcrRedirectPattern(uri, this.dcrRedirectUriPatterns);
   }
 
   private payloadToClientInfo(clientId: string, payload: SignedPayload): OAuthClientInformationFull {

@@ -155,6 +155,9 @@ describe('setupHttpAuth — xsuaa mode', () => {
     const rejected = await register(['https://attacker.example/cb']);
     expect(rejected.status).toBe(400);
     expect(rejected.body.error).toBe('invalid_client_metadata');
+    const invalid = await register(['http://client.example/cb']);
+    expect(invalid.status).toBe(400);
+    expect(invalid.body.error).toBe('invalid_client_metadata');
     expect((await register(['http://127.0.0.1:33418/'])).status).toBe(201);
   });
 
