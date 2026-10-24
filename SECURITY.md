@@ -50,7 +50,7 @@ Confirmed vulnerabilities receive a [GitHub Security Advisory (GHSA)](https://gi
 ## Temporary dependency risk acceptance
 
 Until **31 December 2026, 00:00 Europe/Berlin**, CI and publishing accept only
-[GHSA-86w9-cpqp-85rv](https://github.com/advisories/GHSA-86w9-cpqp-85rv), through
+[GHSA-86w9-cpqp-85rv](https://github.com/advisories/GHSA-86w9-cpqp-85rv). The reviewed dependency path is
 `@sap-cloud-sdk/connectivity@4.9.1 → jks-js@1.1.7 → node-forge@1.4.0`.
 The maintainer renewed this exception on **24 October 2026**, based on
 [SAP's completed assessment of 23 October](https://github.com/SAP/cloud-sdk-js/issues/7023#issuecomment-6365515697).
@@ -62,7 +62,8 @@ and the SDK's keystore conversion. Incoming token verification uses `@sap/xssec`
 The assessment supports low practical risk for the reviewed usage. As of the renewal date,
 no patched Forge release is available; downstream consumers still receive the affected
 dependency and may flag it. The exception does not cover other uses of Forge in a consuming
-application.
+application. The allowlist matches the advisory ID; the reviewed path is the basis for the
+acceptance, not an additional CI-enforced restriction.
 
 All production and development dependencies remain audited. Other high/critical findings
 and audit failures block. [audit-ci.json](./audit-ci.json) enforces expiry. Upgrade and remove
