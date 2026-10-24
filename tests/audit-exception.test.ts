@@ -43,7 +43,7 @@ describe('temporary dependency audit exception', () => {
 
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(new Date('2026-10-07T12:00:00+02:00'));
+    vi.setSystemTime(new Date('2026-10-24T12:00:00+02:00'));
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -86,7 +86,15 @@ describe('temporary dependency audit exception', () => {
     expect(result.allowlistedAdvisoriesFound).toEqual([FORGE]);
   });
 
-  it.each(['2026-10-28T00:00:00+01:00', '2026-10-29T00:00:00+01:00'])(
+  it.each(['2026-10-28T00:00:00+01:00', '2026-12-30T23:59:59.999+01:00'])(
+    'accepts the advisory during the extended exception (%s)',
+    async (now) => {
+      vi.setSystemTime(new Date(now));
+      expect((await audit(report())).allowlistedAdvisoriesFound).toEqual([FORGE]);
+    },
+  );
+
+  it.each(['2026-12-31T00:00:00+01:00', '2027-01-01T00:00:00+01:00'])(
     'blocks the advisory at and after expiry (%s)',
     async (now) => {
       vi.setSystemTime(new Date(now));

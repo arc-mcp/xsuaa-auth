@@ -49,18 +49,27 @@ Confirmed vulnerabilities receive a [GitHub Security Advisory (GHSA)](https://gi
 
 ## Temporary dependency risk acceptance
 
-Until **28 October 2026, 00:00 Europe/Berlin**, CI and publishing accept only
+Until **31 December 2026, 00:00 Europe/Berlin**, CI and publishing accept only
 [GHSA-86w9-cpqp-85rv](https://github.com/advisories/GHSA-86w9-cpqp-85rv), through
 `@sap-cloud-sdk/connectivity@4.9.1 → jks-js@1.1.7 → node-forge@1.4.0`.
-No patched Forge release is available. Review of this package's destination lookup and the
-SDK's keystore conversion found no reachable call to the affected RSA verifier.
-This is temporary risk acceptance, not a fix or proof of non-exploitability; downstream
-consumers still receive the affected dependency and may flag it.
+The maintainer renewed this exception on **24 October 2026**, based on
+[SAP's completed assessment of 23 October](https://github.com/SAP/cloud-sdk-js/issues/7023#issuecomment-6365515697).
+SAP concludes that the vulnerable RSA verifier is unreachable through Cloud SDK's use of
+`jks-js`: keystore parsing and conversion use Forge, while certificate verification uses
+Node's native TLS stack. This agrees with the review of this package's destination lookup
+and the SDK's keystore conversion. Incoming token verification uses `@sap/xssec` and `jose`.
+
+The assessment supports low practical risk for the reviewed usage. As of the renewal date,
+no patched Forge release is available; downstream consumers still receive the affected
+dependency and may flag it. The exception does not cover other uses of Forge in a consuming
+application.
 
 All production and development dependencies remain audited. Other high/critical findings
-and audit failures block. [audit-ci.json](./audit-ci.json) enforces expiry; remove the
-exception when fixed, and reassess if dependency versions or usage change. Any extension
-requires a new maintainer decision. Concrete exposure through this package remains reportable.
+and audit failures block. [audit-ci.json](./audit-ci.json) enforces expiry. Upgrade and remove
+the exception when a validated upstream fix is available; reassess sooner if dependency
+versions or usage change, or SAP revises its assessment. Review before the expiry date;
+any extension requires a new maintainer decision. Concrete exposure through this package
+remains reportable.
 
 ## Safe Harbor
 

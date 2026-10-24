@@ -5,8 +5,8 @@
     {
       "GHSA-86w9-cpqp-85rv": {
         "active": true,
-        "expiry": "2026-10-28T00:00:00+01:00",
-        "notes": "Temporary acceptance of the unpatched node-forge RSA verification advisory; reviewed Cloud SDK 4.9.1 -> jks-js 1.1.7 -> node-forge 1.4.0 usage. See SECURITY.md. Remove when fixed; reassess on dependency/usage changes or before 28 October 2026. This does not establish non-exploitability."
+        "expiry": "2026-12-31T00:00:00+01:00",
+        "notes": "Renewed on 24 October 2026 for the reviewed @sap-cloud-sdk/connectivity 4.9.1 -> jks-js 1.1.7 -> node-forge 1.4.0 path. SAP's 23 October assessment concludes that Cloud SDK's keystore conversion does not reach Forge's vulnerable RSA verifier; certificate verification uses Node's native TLS stack: https://github.com/SAP/cloud-sdk-js/issues/7023#issuecomment-6365515697. Temporary acceptance is limited to this advisory and reviewed usage; the dependency remains affected. Upgrade and remove the exception when a validated upstream fix is available; reassess on dependency or usage changes, revised SAP guidance, or before 31 December 2026. See SECURITY.md."
       }
     }
   ]
