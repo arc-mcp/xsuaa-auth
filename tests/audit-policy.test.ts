@@ -38,12 +38,10 @@ function report(via = [advisory(FORGE)]) {
   };
 }
 
-describe('temporary dependency audit exception', () => {
+describe('dependency audit gate', () => {
   let directory: string;
 
   beforeEach(() => {
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(new Date('2026-10-24T12:00:00+02:00'));
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -59,7 +57,6 @@ describe('temporary dependency audit exception', () => {
   });
 
   afterEach(() => {
-    vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
     rmSync(directory, { recursive: true, force: true });
@@ -80,27 +77,9 @@ describe('temporary dependency audit exception', () => {
     expect(result.allowlistedAdvisoriesFound).toEqual([]);
   });
 
-  it('accepts the specified advisory and its transitive findings during the exception', async () => {
-    const result = await audit(report());
-    expect(result.advisoriesFound).toEqual([]);
-    expect(result.allowlistedAdvisoriesFound).toEqual([FORGE]);
+  it('blocks the retired Forge advisory and its transitive findings', async () => {
+    await expect(audit(report())).rejects.toThrow('Failed security audit');
   });
-
-  it.each(['2026-10-28T00:00:00+01:00', '2026-12-30T23:59:59.999+01:00'])(
-    'accepts the advisory during the extended exception (%s)',
-    async (now) => {
-      vi.setSystemTime(new Date(now));
-      expect((await audit(report())).allowlistedAdvisoriesFound).toEqual([FORGE]);
-    },
-  );
-
-  it.each(['2026-12-31T00:00:00+01:00', '2027-01-01T00:00:00+01:00'])(
-    'blocks the advisory at and after expiry (%s)',
-    async (now) => {
-      vi.setSystemTime(new Date(now));
-      await expect(audit(report())).rejects.toThrow('Failed security audit');
-    },
-  );
 
   it('does not suppress another advisory in node-forge', async () => {
     await expect(audit(report([advisory(FORGE), advisory(OTHER)]))).rejects.toThrow('Failed security audit');
