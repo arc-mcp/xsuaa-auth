@@ -247,6 +247,40 @@ describe('StatelessDcrClientStore', () => {
     const fetched = await store.getClient(registered.client_id);
     expect(fetched?.redirect_uris).toEqual(['https://example.com/cb']);
   });
+
+  it('bounds dynamically-registered redirect_uris and never evicts the baked defaults', async () => {
+    const store = makeStore();
+    const baked = (await store.getClient(XSUAA_ID))!.redirect_uris.slice();
+    const bakedCount = baked.length;
+
+    // Register far more distinct allowlisted URIs than the cap (localhost:* matches the defaults).
+    for (let i = 0; i < 200; i++) {
+      store.ensureRedirectUri(XSUAA_ID, `http://localhost:${10000 + i}/cb`);
+    }
+    const c = (await store.getClient(XSUAA_ID))!;
+
+    // The dynamic set is capped at 64, so the total never exceeds baked + 64.
+    expect(c.redirect_uris.length).toBe(bakedCount + 64);
+    // Every baked default is still present — baked entries are never evicted.
+    for (const uri of baked) expect(c.redirect_uris).toContain(uri);
+    // FIFO eviction: the most recent additions survive, the oldest dynamic ones are gone.
+    expect(c.redirect_uris).toContain('http://localhost:10199/cb');
+    expect(c.redirect_uris).not.toContain('http://localhost:10000/cb');
+  });
+
+  it('emits oauth_redirect_uri_evicted (warn) when the dynamic redirect_uri cap is exceeded', async () => {
+    const logger = makeCapturingLogger();
+    const store = makeStore({ logger });
+    // 65 distinct additions: the 65th exceeds the cap of 64 and evicts the oldest dynamic entry.
+    for (let i = 0; i <= 64; i++) {
+      store.ensureRedirectUri(XSUAA_ID, `http://localhost:${20000 + i}/cb`);
+    }
+    const evt = logger.audit.find((e) => e.event === 'oauth_redirect_uri_evicted');
+    expect(evt).toBeDefined();
+    expect(evt?.level).toBe('warn');
+    expect(evt?.redirectUri).toBe('http://localhost:20000/cb'); // the oldest dynamic entry
+    expect(evt?.registeredClientId).toBe(XSUAA_ID);
+  });
 });
 
 describe('StatelessDcrClientStore dcrRedirectUriPatterns', () => {

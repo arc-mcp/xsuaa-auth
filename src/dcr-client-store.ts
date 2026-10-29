@@ -83,6 +83,16 @@ const SIG_BYTES = 16;
  */
 const DEFAULT_TTL_SECONDS = 30 * 24 * 60 * 60;
 
+/**
+ * Upper bound on redirect_uris dynamically registered for the pre-registered
+ * XSUAA default client via {@link StatelessDcrClientStore.ensureRedirectUri}.
+ * The baked {@link XSUAA_DEFAULT_REDIRECT_URIS} are never counted or evicted;
+ * only request-driven additions are bounded, so this process-lived array cannot
+ * grow without limit. The ceiling sits well above the handful of manual-OAuth
+ * clients (Copilot Studio, …) that share the default client id in practice.
+ */
+const MAX_DYNAMIC_DEFAULT_CLIENT_REDIRECT_URIS = 64;
+
 // Defaults applied when a registration omits these fields.
 const DEFAULT_GRANT_TYPES = ['authorization_code', 'refresh_token'] as const;
 const DEFAULT_RESPONSE_TYPES = ['code'] as const;
@@ -174,6 +184,8 @@ export class StatelessDcrClientStore implements OAuthRegisteredClientsStore {
   private readonly redirectUriPatterns: readonly string[];
   private readonly dcrRedirectUriPatterns: readonly string[] | undefined;
   private readonly logger: Logger;
+  /** Count of baked redirect_uris that precede any dynamic additions and are never evicted. */
+  private readonly bakedRedirectUriCount: number;
 
   constructor(
     xsuaaClientId: string,
@@ -210,6 +222,8 @@ export class StatelessDcrClientStore implements OAuthRegisteredClientsStore {
     // separator (see comment on the option).
     this.hmacKey = crypto.createHmac('sha256', signingSecret).update(kdfLabel).digest();
     this.xsuaaClient = buildXsuaaDefaultClient(xsuaaClientId, xsuaaClientSecret, defaultRedirectUris);
+    // Baked entries sit at the front of redirect_uris; dynamic additions follow.
+    this.bakedRedirectUriCount = this.xsuaaClient.redirect_uris.length;
     this.ttlSeconds = options.ttlSeconds ?? DEFAULT_TTL_SECONDS;
     this.now = options.now ?? (() => Date.now());
   }
@@ -364,6 +378,29 @@ export class StatelessDcrClientStore implements OAuthRegisteredClientsStore {
         redirectUri: uri,
       });
       return;
+    }
+
+    // Bound the request-driven additions: the baked redirect_uris (the first
+    // bakedRedirectUriCount entries) are never evicted; once the dynamic set is
+    // full, drop the oldest dynamic entry before appending the new one. This
+    // caps a process-lived array fed from request input (CWE-770). Eviction is
+    // self-healing: an active client re-registers its URI on its next
+    // /authorize, so the working set survives churn.
+    const dynamicCount = this.xsuaaClient.redirect_uris.length - this.bakedRedirectUriCount;
+    if (dynamicCount >= MAX_DYNAMIC_DEFAULT_CLIENT_REDIRECT_URIS) {
+      const [evicted] = this.xsuaaClient.redirect_uris.splice(this.bakedRedirectUriCount, 1);
+      this.logger.debug('Evicted oldest dynamic redirect_uri for XSUAA default client (cap reached)', {
+        clientId,
+        evicted,
+        cap: MAX_DYNAMIC_DEFAULT_CLIENT_REDIRECT_URIS,
+      });
+      this.logger.emitAudit?.({
+        timestamp: new Date().toISOString(),
+        level: 'warn',
+        event: 'oauth_redirect_uri_evicted',
+        registeredClientId: clientId,
+        redirectUri: evicted,
+      });
     }
 
     this.xsuaaClient.redirect_uris.push(uri);
