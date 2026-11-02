@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.1](https://github.com/arc-mcp/xsuaa-auth/compare/v1.2.0...v1.2.1) (2026-11-02)
+
+
+### Bug Fixes
+
+* **deps:** patch redirect and static-path vulnerabilities ([#106](https://github.com/arc-mcp/xsuaa-auth/issues/106)) ([2557e18](https://github.com/arc-mcp/xsuaa-auth/commit/2557e18bc5fb374fcf7065ecca118dc9c20a8c19))
+* **deps:** update node-forge and pin release npm integrity ([#101](https://github.com/arc-mcp/xsuaa-auth/issues/101)) ([e207c8a](https://github.com/arc-mcp/xsuaa-auth/commit/e207c8aa4ca13db885e22b69101823c20403bc0e))
+
 ## [1.2.0](https://github.com/arc-mcp/xsuaa-auth/compare/v1.1.1...v1.2.0) (2026-10-23)
 
 
