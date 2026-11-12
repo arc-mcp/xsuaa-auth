@@ -25,7 +25,7 @@ vi.mock('@sap/xssec', () => {
 
 const express = (await import('express')).default;
 const request = (await import('supertest')).default;
-const { setupHttpAuth } = await import('../src/index.js');
+const { setupHttpAuth, OAuthStateCodec } = await import('../src/index.js');
 
 import type { Express } from 'express';
 import { type CapturingLogger, makeCapturingLogger } from './helpers/test-logger.js';
@@ -183,12 +183,35 @@ describe('setupHttpAuth — xsuaa mode', () => {
       expect(reg.status).toBe(201);
       vi.stubGlobal(
         'fetch',
+        vi
+          .fn()
+          .mockResolvedValue(
+            new Response(JSON.stringify({ access_token: 'initial-access', refresh_token: 'revoked-refresh' })),
+          ),
+      );
+      const issued = await request(app)
+        .post('/token')
+        .type('form')
+        .send({
+          grant_type: 'authorization_code',
+          client_id: reg.body.client_id,
+          code: new OAuthStateCodec(XSUAA_CREDS.clientsecret).authorizationCodes.encode(
+            'code',
+            reg.body.client_id,
+            'http://localhost:53682/callback',
+          ),
+          code_verifier: 'v'.repeat(64),
+          redirect_uri: 'http://localhost:53682/callback',
+        });
+      expect(issued.status).toBe(200);
+      vi.stubGlobal(
+        'fetch',
         vi.fn().mockResolvedValue({ ok: false, status, text: vi.fn().mockResolvedValue(body) } as unknown as Response),
       );
       const res = await request(app)
         .post('/token')
         .type('form')
-        .send({ grant_type: 'refresh_token', refresh_token: 'revoked-refresh', client_id: reg.body.client_id });
+        .send({ grant_type: 'refresh_token', refresh_token: issued.body.refresh_token, client_id: reg.body.client_id });
       return { res, logger };
     }
 

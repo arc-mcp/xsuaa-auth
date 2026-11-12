@@ -249,11 +249,41 @@ when their public URL and signing secret agree. Reverse proxies must preserve Co
 and Origin headers and advertise the correct public `appUrl`, including its path prefix.
 
 Existing client IDs remain valid. Sign-ins in flight during the upgrade must restart:
-legacy unbound state and raw upstream authorization codes are rejected. Existing
-refresh tokens are not invalidated by this upgrade. If exposure is suspected, use
-documented XSUAA incident controls and verify token invalidation independently.
-Rotating the DCR signing key alone does not revoke upstream tokens.
-Disabling DCR blocks new registrations, not existing clients or stolen tokens.
+legacy unbound state and raw upstream authorization codes are rejected.
+
+### Refresh-token binding
+
+Refresh tokens returned by this proxy are signed envelopes bound to the local
+`client_id`, XSUAA URL/client ID and server callback URL. Both initial issuance
+and refresh-token rotation preserve that binding. Clients must store and return
+the complete opaque value. A different client, a modified envelope or a raw
+upstream token receives `400 invalid_grant` before XSUAA is contacted.
+
+**Upgrade:** previously issued raw refresh tokens require one fresh sign-in.
+There is no raw-token compatibility fallback because the proxy cannot recover
+their original local client. Upgrade every instance before resuming OAuth traffic;
+old instances still accept raw tokens and cannot use the new envelopes. Existing
+access tokens remain usable until they expire or are revoked upstream.
+
+Instances with identical signing secret and context accept each other's envelopes.
+The existing `dcrSigningSecret` also signs refresh envelopes with a separate key;
+when omitted, it defaults to the XSUAA client secret. A dedicated secret preserves
+the local envelope across a binding-secret rotation, subject to XSUAA still
+accepting the upstream grant. Rotating the signing secret invalidates local
+refresh envelopes. Changing `stateKdfLabel` alone does not invalidate them.
+XSUAA continues to enforce expiry, rotation and revocation; the proxy adds no
+authorization-code-style ten-minute expiry to refresh tokens.
+
+The signature does not encrypt the upstream token. Public client IDs are public:
+possession of an envelope and its original public client ID still permits refresh.
+If exposure is suspected, use documented XSUAA incident controls and verify token
+invalidation independently. Local key rotation does not revoke upstream tokens.
+Disabling DCR blocks new registrations, not existing clients or upstream tokens.
+
+Revoking a local refresh envelope unwraps it for its issuing client, regardless
+of `token_type_hint`. Invalid local envelopes are a successful no-op. Existing
+raw access-token and legacy upstream-token revocation remains supported; raw-token
+revocation does not establish a local client binding.
 
 ### Upgrading deployments
 

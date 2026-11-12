@@ -90,6 +90,22 @@ function createTestProxyProvider({
   return { provider: provider as unknown as AnyProvider, stateCodec };
 }
 
+async function issueRefreshToken(provider: AnyProvider, rawToken: string): Promise<string> {
+  vi.mocked(fetch).mockResolvedValueOnce(
+    mockFetchResponse({ ok: true, status: 200, json: { access_token: 'access', refresh_token: rawToken } }),
+  );
+  const result = await provider.exchangeAuthorizationCode(
+    { client_id: 'local-client-id' },
+    new OAuthStateCodec(STUB_XSUAA_CREDS.clientsecret).authorizationCodes.encode(
+      'code',
+      'local-client-id',
+      'https://client.example.com/callback',
+    ),
+  );
+  vi.mocked(fetch).mockClear();
+  return result.refresh_token as string;
+}
+
 describe('createXsuaaOAuthProvider', () => {
   it('returns the provider, client store, and state codec', () => {
     const result = createXsuaaOAuthProvider(STUB_XSUAA_CREDS, 'https://arc1.example.com');
@@ -213,7 +229,7 @@ describe('XsuaaProxyOAuthProvider', () => {
       access_token: 'access-token',
       token_type: 'bearer',
       expires_in: 3600,
-      refresh_token: 'refresh-token',
+      refresh_token: expect.stringMatching(/^mcp-refresh-/),
       scope: 'openid arc1.read',
     });
   });
@@ -259,14 +275,18 @@ describe('XsuaaProxyOAuthProvider', () => {
     vi.stubGlobal('fetch', fetchMock);
     const { provider } = createTestProxyProvider();
 
-    const token = await provider.exchangeRefreshToken({ client_id: 'local-client-id' }, 'old-refresh');
+    const oldToken = await issueRefreshToken(provider, 'old-refresh');
+    const token = await provider.exchangeRefreshToken({ client_id: 'local-client-id' }, oldToken);
 
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     const body = new URLSearchParams(init.body as string);
     expect(body.get('grant_type')).toBe('refresh_token');
     expect(body.get('refresh_token')).toBe('old-refresh');
     expect(body.get('client_id')).toBe(STUB_XSUAA_CREDS.clientid);
-    expect(token).toMatchObject({ access_token: 'fresh-access', refresh_token: 'fresh-refresh' });
+    expect(token).toMatchObject({
+      access_token: 'fresh-access',
+      refresh_token: expect.stringMatching(/^mcp-refresh-/),
+    });
   });
 
   it.each([
@@ -284,7 +304,8 @@ describe('XsuaaProxyOAuthProvider', () => {
       logger,
     ) as unknown as AnyProvider;
 
-    await expect(provider.exchangeRefreshToken({ client_id: 'local-client-id' }, 'revoked')).rejects.toMatchObject({
+    const token = await issueRefreshToken(provider, 'revoked');
+    await expect(provider.exchangeRefreshToken({ client_id: 'local-client-id' }, token)).rejects.toMatchObject({
       errorCode: 'invalid_grant',
     });
     expect(logger.warns.find((w) => /XSUAA refresh token rejected/.test(w.message))?.data).toEqual({ status });
@@ -311,7 +332,8 @@ describe('XsuaaProxyOAuthProvider', () => {
       logger,
     ) as unknown as AnyProvider;
 
-    const error = await provider.exchangeRefreshToken({ client_id: 'local-client-id' }, 'refresh').catch((e) => e);
+    const token = await issueRefreshToken(provider, 'refresh');
+    const error = await provider.exchangeRefreshToken({ client_id: 'local-client-id' }, token).catch((e) => e);
     expect(error).toBeInstanceOf(Error);
     expect(error).not.toHaveProperty('errorCode');
     expect(error.message).toBe(`XSUAA refresh token exchange failed: ${status}`);
