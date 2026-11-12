@@ -2,6 +2,11 @@
 
 ## [1.2.1](https://github.com/arc-mcp/xsuaa-auth/compare/v1.2.0...v1.2.1) (2026-11-12)
 
+### Upgrade notes
+
+- **Sign in again after upgrading:** refresh tokens issued before 1.2.1 are rejected by the new client-binding checks. Users must complete one fresh sign-in; there is no legacy raw-refresh-token fallback.
+- **Coordinate all instances:** upgrade every instance before resuming OAuth traffic. Old instances still accept raw refresh tokens and cannot use the new signed envelopes. Existing access tokens remain valid until they expire or are revoked upstream.
+- **Refresh application dependency locks:** resolve transitive `node-forge` to **1.4.3 or later**. This library's lockfile update does not rewrite consuming applications' lockfiles.
 
 ### Bug Fixes
 
