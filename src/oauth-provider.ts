@@ -26,6 +26,7 @@ import { InvalidGrantError, ProxyOAuthServerProvider } from './internal/sdk.js';
 import type { Logger } from './logger.js';
 import { noopLogger } from './logger.js';
 import { type AuthorizationParams, OAuthConsent } from './oauth-consent.js';
+import { OAuthRefreshTokenCodec } from './oauth-refresh-token.js';
 import { OAuthStateCodec } from './oauth-state.js';
 import type { Verifier } from './types.js';
 import type { XsuaaCredentials } from './xsuaa.js';
@@ -77,6 +78,7 @@ export class XsuaaProxyOAuthProvider extends ProxyOAuthServerProvider {
   private stateCodec: OAuthStateCodec;
   private readonly logger: Logger;
   private readonly consent: OAuthConsent;
+  private readonly refreshTokens: OAuthRefreshTokenCodec;
   private readonly dcrEnabled: boolean;
 
   constructor(
@@ -110,6 +112,12 @@ export class XsuaaProxyOAuthProvider extends ProxyOAuthServerProvider {
     this.callbackUrl = callbackUrl;
     this.stateCodec = stateCodec;
     this.logger = logger;
+    this.refreshTokens = new OAuthRefreshTokenCodec(
+      options.signingSecret ?? credentials.clientsecret,
+      credentials.url,
+      credentials.clientid,
+      callbackUrl,
+    );
     this.consent = new OAuthConsent(
       options.signingSecret ?? credentials.clientsecret,
       options.authorizationUrl ?? new URL('../authorize', callbackUrl).href,
@@ -257,13 +265,14 @@ export class XsuaaProxyOAuthProvider extends ProxyOAuthServerProvider {
       access_token: data.access_token,
       token_type: data.token_type ?? 'bearer',
       expires_in: data.expires_in,
-      refresh_token: data.refresh_token,
+      refresh_token:
+        data.refresh_token === undefined ? undefined : this.refreshTokens.encode(data.refresh_token, _client.client_id),
       scope: data.scope,
     };
   }
 
   /**
-   * Override exchangeRefreshToken to use XSUAA credentials.
+   * Verify the local client binding before substituting the shared XSUAA credentials.
    */
   override async exchangeRefreshToken(
     _client: OAuthClientInformationFull,
@@ -276,9 +285,11 @@ export class XsuaaProxyOAuthProvider extends ProxyOAuthServerProvider {
     refresh_token?: string;
     scope?: string;
   }> {
+    const upstreamToken = this.refreshTokens.decode(refreshToken, _client.client_id);
+    if (!upstreamToken) throw new InvalidGrantError('Refresh token is invalid or belongs to another client');
     const params = new URLSearchParams({
       grant_type: 'refresh_token',
-      refresh_token: refreshToken,
+      refresh_token: upstreamToken,
       client_id: this.xsuaaClientId,
       client_secret: this.xsuaaClientSecret,
     });
@@ -311,7 +322,8 @@ export class XsuaaProxyOAuthProvider extends ProxyOAuthServerProvider {
       access_token: data.access_token,
       token_type: data.token_type ?? 'bearer',
       expires_in: data.expires_in,
-      refresh_token: data.refresh_token,
+      refresh_token:
+        data.refresh_token === undefined ? undefined : this.refreshTokens.encode(data.refresh_token, _client.client_id),
       scope: data.scope,
     };
   }
@@ -327,10 +339,18 @@ export class XsuaaProxyOAuthProvider extends ProxyOAuthServerProvider {
     _client: OAuthClientInformationFull,
     request: { token: string; token_type_hint?: string },
   ): Promise<void> => {
+    // A hint is optional and may be wrong. Recognize local envelopes first;
+    // invalid envelopes are a successful no-op, as for other invalid revocations.
+    // Raw access-token (and legacy upstream-token) revocation remains supported.
+    const wrapped = this.refreshTokens.isWrapped(request.token);
+    const token = wrapped ? this.refreshTokens.decode(request.token, _client.client_id) : request.token;
+    if (!token) return;
     const revokeUrl = this.xsuaaTokenUrl.replace('/oauth/token', '/oauth/revoke');
 
-    const params = new URLSearchParams({ token: request.token });
-    if (request.token_type_hint) {
+    const params = new URLSearchParams({ token });
+    if (wrapped) {
+      params.set('token_type_hint', 'refresh_token');
+    } else if (request.token_type_hint) {
       params.set('token_type_hint', request.token_type_hint);
     }
 
@@ -377,7 +397,8 @@ export interface CreateXsuaaOAuthProviderOptions {
   /** Legacy codec state lifetime. Browser-approved flows are always capped at ten minutes. */
   stateTtlSeconds?: number;
   /**
-   * Optional dedicated secret for HMAC-signing DCR client_ids + OAuth state.
+   * Optional dedicated secret for HMAC-signing DCR client_ids, OAuth state
+   * and client-bound refresh envelopes (each uses a separate key).
    * When set, the signing key derives from this secret instead of the XSUAA
    * `clientsecret`. Use this to keep cached client_ids valid across redeploys
    * that rotate the XSUAA binding's clientsecret. Defaults to
