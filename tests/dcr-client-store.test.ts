@@ -32,6 +32,12 @@ function makeStore(
   return new StatelessDcrClientStore(XSUAA_ID, XSUAA_SECRET, SIGNING, opts);
 }
 
+async function defaultRedirects(store: StatelessDcrClientStore): Promise<string[]> {
+  const client = await store.getClient(XSUAA_ID);
+  if (!client) throw new Error('Missing default-client fixture');
+  return client.redirect_uris;
+}
+
 describe('StatelessDcrClientStore', () => {
   it('requires a non-empty signing secret', () => {
     expect(() => new StatelessDcrClientStore(XSUAA_ID, XSUAA_SECRET, '')).toThrow(/non-empty/);
@@ -246,6 +252,82 @@ describe('StatelessDcrClientStore', () => {
     store.ensureRedirectUri(registered.client_id, 'https://other.example.com/cb');
     const fetched = await store.getClient(registered.client_id);
     expect(fetched?.redirect_uris).toEqual(['https://example.com/cb']);
+  });
+
+  it('bounds dynamically-registered redirect_uris and never evicts the baked defaults', async () => {
+    const store = makeStore();
+    const baked = (await defaultRedirects(store)).slice();
+    const bakedCount = baked.length;
+
+    // Register far more distinct allowlisted URIs than the cap (localhost:* matches the defaults).
+    for (let i = 0; i < 200; i++) {
+      store.ensureRedirectUri(XSUAA_ID, `http://localhost:${10000 + i}/cb`);
+    }
+    const redirects = await defaultRedirects(store);
+
+    // The dynamic set is capped at 64, so the total never exceeds baked + 64.
+    expect(redirects.length).toBe(bakedCount + 64);
+    // Every baked default is still present — baked entries are never evicted.
+    for (const uri of baked) expect(redirects).toContain(uri);
+    // FIFO eviction: the most recent additions survive, the oldest dynamic ones are gone.
+    expect(redirects).toContain('http://localhost:10199/cb');
+    expect(redirects).not.toContain('http://localhost:10000/cb');
+  });
+
+  it('emits oauth_redirect_uri_evicted (warn) when the dynamic redirect_uri cap is exceeded', async () => {
+    const logger = makeCapturingLogger();
+    const store = makeStore({ logger });
+    // 65 distinct additions: the 65th exceeds the cap of 64 and evicts the oldest dynamic entry.
+    for (let i = 0; i <= 64; i++) {
+      store.ensureRedirectUri(XSUAA_ID, `http://localhost:${20000 + i}/cb`);
+    }
+    const evt = logger.audit.find((e) => e.event === 'oauth_redirect_uri_evicted');
+    expect(evt).toBeDefined();
+    expect(evt?.level).toBe('warn');
+    expect(evt?.redirectUri).toBe('http://localhost:20000/cb'); // the oldest dynamic entry
+    expect(evt?.registeredClientId).toBe(XSUAA_ID);
+  });
+
+  it.each([0, 70])('preserves %i configured defaults independently of the dynamic bound', async (count) => {
+    const defaults = Array.from({ length: count }, (_, index) => `https://configured.example/cb/${index}`);
+    const store = new StatelessDcrClientStore(XSUAA_ID, XSUAA_SECRET, SIGNING, {
+      defaultRedirectUris: defaults,
+      redirectUriPatterns: ['https://configured.example/**', 'http://localhost:*/**'],
+    });
+    for (let index = 0; index < 200; index++) {
+      store.ensureRedirectUri(XSUAA_ID, `http://localhost:1234/cb?attempt=${index}`);
+    }
+    const stored = await defaultRedirects(store);
+    expect(stored).toHaveLength(count + 64);
+    expect(stored.slice(0, count)).toEqual(defaults);
+    expect(defaults).toHaveLength(count);
+    expect(stored.at(-1)).toBe('http://localhost:1234/cb?attempt=199');
+  });
+
+  it('does not evict or reorder entries for duplicates, rejected URIs or another client', async () => {
+    const logger = makeCapturingLogger();
+    const store = makeStore({ logger });
+    const registered = await store.registerClient({ redirect_uris: ['https://client.example/cb'] });
+    const dynamic = Array.from({ length: 64 }, (_, index) => `http://localhost:1234/cb?slot=${index}`);
+    for (const uri of dynamic) store.ensureRedirectUri(XSUAA_ID, uri);
+    const before = [...(await defaultRedirects(store))];
+    for (const uri of before) store.ensureRedirectUri(XSUAA_ID, uri);
+    for (const uri of ['https://attacker.example/cb', 'not-a-url', 'http://localhost:x@attacker.example/cb']) {
+      store.ensureRedirectUri(XSUAA_ID, uri);
+    }
+    for (const clientId of [registered.client_id, 'unknown-client']) {
+      store.ensureRedirectUri(clientId, 'http://localhost:1234/cb?new=1');
+    }
+    expect(await defaultRedirects(store)).toEqual(before);
+    expect(logger.audit.filter((event) => event.event === 'oauth_redirect_uri_evicted')).toHaveLength(0);
+    expect((await store.getClient(registered.client_id))?.redirect_uris).toEqual(['https://client.example/cb']);
+
+    store.ensureRedirectUri(XSUAA_ID, 'http://localhost:1234/cb?new=1');
+    expect(await defaultRedirects(store)).not.toContain(dynamic[0]);
+    expect(logger.audit.filter((event) => event.event === 'oauth_redirect_uri_evicted')).toHaveLength(1);
+    store.ensureRedirectUri(XSUAA_ID, dynamic[0]);
+    expect((await defaultRedirects(store)).at(-1)).toBe(dynamic[0]);
+    expect(await defaultRedirects(store)).toHaveLength(before.length);
   });
 });
 

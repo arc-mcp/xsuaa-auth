@@ -311,6 +311,14 @@ XSUAA validates the server's callback URL; this package validates client redirec
 For the pre-registered default client, `redirectUriPatterns` gates added URIs and
 the callback. Keep patterns narrow and align `defaultRedirectUris` with them.
 
+The default client's in-memory list retains at most 64 dynamically added redirect
+URIs, in addition to every configured `defaultRedirectUris` entry. A new distinct
+URI evicts the oldest dynamic entry when full; duplicates do not change the order.
+The `/authorize` shim restores an evicted URI on its next request, including an
+approval POST. Callback validation still uses the configured allowlist, so eviction
+does not invalidate a sign-in already in progress or require shared state between
+instances. DCR registrations are separate and unaffected.
+
 DCR registration separately accepts HTTPS, loopback HTTP and the known schemes
 `claude:`, `cursor:`, `vscode:` and `vscode-insiders:`; patterns can permit extra
 custom schemes. DCR callbacks must exactly match a URI in the signed registration.
