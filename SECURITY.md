@@ -47,30 +47,17 @@ Confirmed vulnerabilities receive a [GitHub Security Advisory (GHSA)](https://gi
 - **Misconfiguration in a consuming application** — e.g. setting an over-broad `redirectUriPatterns`, leaving `required: false` in production, or reusing the default `dcrSigningSecret`. The README documents the secure configuration; deployment hardening is the operator's responsibility.
 - **Issues in unsupported versions** (see Supported Versions above).
 
-## Temporary dependency risk acceptance
+## Dependency audit policy
 
-Until **31 December 2026, 00:00 Europe/Berlin**, CI and publishing accept only
-[GHSA-86w9-cpqp-85rv](https://github.com/advisories/GHSA-86w9-cpqp-85rv). The reviewed dependency path is
-`@sap-cloud-sdk/connectivity@4.9.1 → jks-js@1.1.7 → node-forge@1.4.0`.
-The maintainer renewed this exception on **24 October 2026**, based on
-[SAP's completed assessment of 23 October](https://github.com/SAP/cloud-sdk-js/issues/7023#issuecomment-6365515697).
-SAP concludes that the vulnerable RSA verifier is unreachable through Cloud SDK's use of
-`jks-js`: keystore parsing and conversion use Forge, while certificate verification uses
-Node's native TLS stack. This agrees with the review of this package's destination lookup
-and the SDK's keystore conversion. Incoming token verification uses `@sap/xssec` and `jose`.
+The lockfile resolves `node-forge` to **1.4.2**, including the
+[RSA verification fix and PEM Buffer compatibility repair](https://github.com/digitalbazaar/forge/blob/v1.4.2/CHANGELOG.md).
+The temporary `GHSA-86w9-cpqp-85rv` risk acceptance has been removed.
+All production and development dependencies remain audited; high/critical findings and audit
+failures block CI and publishing through [audit-ci.json](./audit-ci.json).
 
-The assessment supports low practical risk for the reviewed usage. As of the renewal date,
-no patched Forge release is available; downstream consumers still receive the affected
-dependency and may flag it. The exception does not cover other uses of Forge in a consuming
-application. The allowlist matches the advisory ID; the reviewed path is the basis for the
-acceptance, not an additional CI-enforced restriction.
-
-All production and development dependencies remain audited. Other high/critical findings
-and audit failures block. [audit-ci.json](./audit-ci.json) enforces expiry. Upgrade and remove
-the exception when a validated upstream fix is available; reassess sooner if dependency
-versions or usage change, or SAP revises its assessment. Review before the expiry date;
-any extension requires a new maintainer decision. Concrete exposure through this package
-remains reportable.
+Consuming applications maintain their own lockfiles. Refresh their transitive `node-forge`
+resolution to 1.4.2 or later; updating this repository's lockfile does not rewrite downstream locks.
+Concrete exposure through this package remains reportable.
 
 ## Safe Harbor
 

@@ -34,8 +34,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Audit all prod/dev dependencies. Only the expiring advisory in audit-ci.json
-      # is accepted; other HIGH/CRITICAL findings and audit errors still block.
+      # Audit all prod/dev dependencies; HIGH/CRITICAL findings and audit errors block.
       - name: Security audit (npm audit)
         run: npm run audit:ci
 
