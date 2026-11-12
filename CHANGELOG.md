@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.2.1](https://github.com/arc-mcp/xsuaa-auth/compare/v1.2.0...v1.2.1) (2026-11-12)
+
+### Upgrade notes
+
+- **Sign in again after upgrading:** refresh tokens issued before 1.2.1 are rejected by the new client-binding checks. Users must complete one fresh sign-in; there is no legacy raw-refresh-token fallback.
+- **Coordinate all instances:** upgrade every instance before resuming OAuth traffic. Old instances still accept raw refresh tokens and cannot use the new signed envelopes. Existing access tokens remain valid until they expire or are revoked upstream.
+- **Refresh application dependency locks:** resolve transitive `node-forge` to **1.4.3 or later**. This library's lockfile update does not rewrite consuming applications' lockfiles.
+
+### Bug Fixes
+
+* **deps:** patch redirect and static-path vulnerabilities ([#106](https://github.com/arc-mcp/xsuaa-auth/issues/106)) ([2557e18](https://github.com/arc-mcp/xsuaa-auth/commit/2557e18bc5fb374fcf7065ecca118dc9c20a8c19))
+* **deps:** update node-forge and pin release npm integrity ([#101](https://github.com/arc-mcp/xsuaa-auth/issues/101)) ([e207c8a](https://github.com/arc-mcp/xsuaa-auth/commit/e207c8aa4ca13db885e22b69101823c20403bc0e))
+* **deps:** update node-forge to 1.4.3 ([#112](https://github.com/arc-mcp/xsuaa-auth/issues/112)) ([a4eaafc](https://github.com/arc-mcp/xsuaa-auth/commit/a4eaafc70e9809dc4e649b7e658ac551121f0847))
+* **oauth:** bind refresh grants to the issuing client ([#111](https://github.com/arc-mcp/xsuaa-auth/issues/111)) ([a8c77bc](https://github.com/arc-mcp/xsuaa-auth/commit/a8c77bcb49d89cb35bcade396f96ab9e60ca7ce4))
+* **oauth:** bound dynamically-registered redirect_uris on the default client ([#99](https://github.com/arc-mcp/xsuaa-auth/issues/99)) ([35fc120](https://github.com/arc-mcp/xsuaa-auth/commit/35fc120fe7fae99c2306f78db166c552a2d67b6d))
+
 ## [1.2.0](https://github.com/arc-mcp/xsuaa-auth/compare/v1.1.1...v1.2.0) (2026-10-23)
 
 
