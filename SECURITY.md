@@ -49,14 +49,14 @@ Confirmed vulnerabilities receive a [GitHub Security Advisory (GHSA)](https://gi
 
 ## Dependency audit policy
 
-The lockfile resolves `node-forge` to **1.4.2**, including the
-[RSA verification fix and PEM Buffer compatibility repair](https://github.com/digitalbazaar/forge/blob/v1.4.2/CHANGELOG.md).
+The lockfile resolves `node-forge` to **1.4.3**, including the
+[Ed25519, TLS, HTTP parsing and certificate name-constraints fixes](https://github.com/digitalbazaar/forge/blob/v1.4.3/CHANGELOG.md).
 The temporary `GHSA-86w9-cpqp-85rv` risk acceptance has been removed.
 All production and development dependencies remain audited; high/critical findings and audit
 failures block CI and publishing through [audit-ci.json](./audit-ci.json).
 
 Consuming applications maintain their own lockfiles. Refresh their transitive `node-forge`
-resolution to 1.4.2 or later; updating this repository's lockfile does not rewrite downstream locks.
+resolution to 1.4.3 or later; updating this repository's lockfile does not rewrite downstream locks.
 Concrete exposure through this package remains reportable.
 
 ## Safe Harbor
