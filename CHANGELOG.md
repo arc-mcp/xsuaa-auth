@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.2](https://github.com/arc-mcp/xsuaa-auth/compare/v1.2.1...v1.2.2) (2026-11-16)
+
+
+### Bug Fixes
+
+* **deps:** patch transitive Hono vulnerabilities ([#114](https://github.com/arc-mcp/xsuaa-auth/issues/114)) ([64e0745](https://github.com/arc-mcp/xsuaa-auth/commit/64e074513c702bd060564310a8c3f6eaf6509fb4))
+
 ## [1.2.1](https://github.com/arc-mcp/xsuaa-auth/compare/v1.2.0...v1.2.1) (2026-11-12)
 
 ### Upgrade notes
