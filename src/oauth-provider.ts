@@ -22,7 +22,7 @@
 import type { Response } from 'express';
 import { StatelessDcrClientStore } from './dcr-client-store.js';
 import type { OAuthClientInformationFull, OAuthRegisteredClientsStore } from './internal/sdk.js';
-import { InvalidGrantError, ProxyOAuthServerProvider } from './internal/sdk.js';
+import { InvalidGrantError, InvalidTargetError, ProxyOAuthServerProvider } from './internal/sdk.js';
 import type { Logger } from './logger.js';
 import { noopLogger } from './logger.js';
 import { type AuthorizationParams, OAuthConsent } from './oauth-consent.js';
@@ -31,6 +31,7 @@ import { OAuthStateCodec } from './oauth-state.js';
 import type { Verifier } from './types.js';
 import type { XsuaaCredentials } from './xsuaa.js';
 import { createXsuaaTokenVerifier, qualifyXsuaaScopes } from './xsuaa.js';
+import { validateExpectedResource, XsuaaResourceMismatchError } from './xsuaa-resource.js';
 
 // ─── Types ───────────────────────────────────────────────────────────
 
@@ -80,6 +81,7 @@ export class XsuaaProxyOAuthProvider extends ProxyOAuthServerProvider {
   private readonly consent: OAuthConsent;
   private readonly refreshTokens: OAuthRefreshTokenCodec;
   private readonly dcrEnabled: boolean;
+  private readonly expectedResource?: string;
 
   constructor(
     credentials: XsuaaCredentials,
@@ -88,8 +90,21 @@ export class XsuaaProxyOAuthProvider extends ProxyOAuthServerProvider {
     callbackUrl: string,
     stateCodec: OAuthStateCodec,
     logger: Logger = noopLogger,
-    options: { authorizationUrl?: string; signingSecret?: string; dcrEnabled?: boolean } = {},
+    options: {
+      authorizationUrl?: string;
+      signingSecret?: string;
+      dcrEnabled?: boolean;
+      expectedResource?: string;
+    } = {},
   ) {
+    const expectedResource =
+      options.expectedResource === undefined ? undefined : validateExpectedResource(options.expectedResource);
+    if (expectedResource && new URL(expectedResource).origin !== new URL(callbackUrl).origin) {
+      throw new TypeError('expectedResource must use the callback origin');
+    }
+    if (expectedResource && stateCodec.resourceBinding !== expectedResource) {
+      throw new TypeError('Strict resource mode requires a state codec bound to the same resource');
+    }
     const authUrl = `${credentials.url}/oauth/authorize`;
     const tokenUrl = `${credentials.url}/oauth/token`;
 
@@ -99,7 +114,15 @@ export class XsuaaProxyOAuthProvider extends ProxyOAuthServerProvider {
         tokenUrl: tokenUrl,
         revocationUrl: `${credentials.url}/oauth/revoke`,
       },
-      verifyAccessToken: verifier,
+      verifyAccessToken: expectedResource
+        ? async (token: string) => {
+            const info = await verifier(token);
+            // The direct constructor accepts a caller-supplied verifier. Do not
+            // silently accept one that omitted the strict resource contract.
+            if (info.resource?.href !== expectedResource) throw new XsuaaResourceMismatchError();
+            return info;
+          }
+        : verifier,
       getClient: (clientId: string) => localClientStore.getClient(clientId),
     });
 
@@ -111,12 +134,14 @@ export class XsuaaProxyOAuthProvider extends ProxyOAuthServerProvider {
     this._localClientStore = localClientStore;
     this.callbackUrl = callbackUrl;
     this.stateCodec = stateCodec;
+    this.expectedResource = expectedResource;
     this.logger = logger;
     this.refreshTokens = new OAuthRefreshTokenCodec(
       options.signingSecret ?? credentials.clientsecret,
       credentials.url,
       credentials.clientid,
       callbackUrl,
+      expectedResource,
     );
     this.consent = new OAuthConsent(
       options.signingSecret ?? credentials.clientsecret,
@@ -156,6 +181,9 @@ export class XsuaaProxyOAuthProvider extends ProxyOAuthServerProvider {
     if ((await this._localClientStore.checkRedirectUri(_client.client_id, params.redirectUri)) !== 'ok') {
       res.status(400).json({ error: 'invalid_request', error_description: 'Unregistered redirect_uri' });
       return;
+    }
+    if (this.expectedResource && params.resource?.href !== this.expectedResource) {
+      throw new InvalidTargetError('Authorization request must name this MCP resource');
     }
     const browserBinding = this.consent.approve(_client, params, res);
     if (!browserBinding) return;
@@ -248,6 +276,7 @@ export class XsuaaProxyOAuthProvider extends ProxyOAuthServerProvider {
     // the same value. The client's redirect_uri (_redirectUri) is irrelevant
     // to XSUAA here — XSUAA only ever saw this server's callback.
     params.set('redirect_uri', this.callbackUrl);
+    if (this.expectedResource) params.set('resource', this.expectedResource);
 
     const response = await fetch(this.xsuaaTokenUrl, {
       method: 'POST',
@@ -300,6 +329,7 @@ export class XsuaaProxyOAuthProvider extends ProxyOAuthServerProvider {
       client_id: this.xsuaaClientId,
       client_secret: this.xsuaaClientSecret,
     });
+    if (this.expectedResource) params.set('resource', this.expectedResource);
 
     const response = await fetch(this.xsuaaTokenUrl, {
       method: 'POST',
@@ -426,6 +456,8 @@ export interface CreateXsuaaOAuthProviderOptions {
    * `${appUrl}/oauth/callback`.
    */
   callbackUrl?: string;
+  /** Opt-in exact resource audience; also binds local state, codes and refresh grants. */
+  expectedResource?: string;
   /** Injected structural logger. Default: silent no-op. */
   logger?: Logger;
 }
@@ -444,6 +476,11 @@ export function createXsuaaOAuthProvider(
   options: CreateXsuaaOAuthProviderOptions = {},
 ): { provider: XsuaaProxyOAuthProvider; clientStore: StatelessDcrClientStore; stateCodec: OAuthStateCodec } {
   const logger = options.logger ?? noopLogger;
+  const expectedResource =
+    options.expectedResource === undefined ? undefined : validateExpectedResource(options.expectedResource);
+  if (expectedResource && new URL(expectedResource).origin !== new URL(appUrl).origin) {
+    throw new TypeError('expectedResource must use the appUrl origin');
+  }
 
   // The signing secret defaults to the XSUAA `clientsecret`, which is the trust
   // anchor for "this server can mint client_ids". The downside: a redeploy that
@@ -485,7 +522,7 @@ export function createXsuaaOAuthProvider(
   // The provider's own verifyAccessToken (used for the OAuth /token introspection
   // path) does not apply scope expansion — the request-time chained verifier (see
   // the facade) owns that. Default identity here keeps the provider self-contained.
-  const verifier = createXsuaaTokenVerifier(credentials, { logger });
+  const verifier = createXsuaaTokenVerifier(credentials, { logger, expectedResource });
 
   // The state codec reuses the same resolved signing secret as DCR (distinct
   // KDF label keeps the two key spaces separate), so it inherits the same
@@ -494,6 +531,7 @@ export function createXsuaaOAuthProvider(
   const stateCodec = new OAuthStateCodec(dcrSigningSecret, {
     kdfLabel: options.stateKdfLabel,
     ttlSeconds: options.stateTtlSeconds,
+    resourceBinding: expectedResource,
   });
 
   const callbackUrl = options.callbackUrl ?? `${appUrl.replace(/\/$/, '')}/oauth/callback`;
@@ -502,6 +540,7 @@ export function createXsuaaOAuthProvider(
     authorizationUrl: `${appUrl.replace(/\/$/, '')}/authorize`,
     signingSecret: dcrSigningSecret,
     dcrEnabled: options.dcrEnabled,
+    expectedResource,
   });
 
   logger.info('XSUAA OAuth provider created (stateless DCR + callback proxy)', {

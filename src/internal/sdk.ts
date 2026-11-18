@@ -24,6 +24,7 @@ export {
   InsufficientScopeError,
   InvalidClientMetadataError,
   InvalidGrantError,
+  InvalidTargetError,
   InvalidTokenError,
   mcpAuthRouter,
   metadataHandler,

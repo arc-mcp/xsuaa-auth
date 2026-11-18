@@ -75,6 +75,8 @@ export interface OAuthStateCodecOptions {
   /** State-token lifetime in seconds. Default 600. Set to `0` (or any
    *  non-positive value) to disable expiration. */
   ttlSeconds?: number;
+  /** Optional resource-specific key separation for strict audience mode. */
+  resourceBinding?: string;
 }
 
 /** Compact JSON shape embedded in the signed token. Keys are terse to keep
@@ -118,6 +120,7 @@ export type DecodeResult =
  */
 export class OAuthStateCodec {
   readonly authorizationCodes: OAuthCodeCodec;
+  readonly resourceBinding?: string;
   private readonly hmacKey: Buffer;
   private readonly ttlSeconds: number;
 
@@ -125,7 +128,11 @@ export class OAuthStateCodec {
     if (!signingSecret) {
       throw new Error('OAuthStateCodec requires a non-empty signingSecret');
     }
-    const kdfLabel = options.kdfLabel ?? DEFAULT_KDF_LABEL;
+    const baseLabel = options.kdfLabel ?? DEFAULT_KDF_LABEL;
+    this.resourceBinding = options.resourceBinding;
+    const kdfLabel = options.resourceBinding
+      ? `${baseLabel}/resource/${crypto.createHash('sha256').update(options.resourceBinding).digest('base64url')}`
+      : baseLabel;
     this.authorizationCodes = new OAuthCodeCodec(signingSecret, kdfLabel);
     // HKDF-style: derive a dedicated key from the shared secret + label.
     // The label domain-separates this key from the DCR client-id signing key.

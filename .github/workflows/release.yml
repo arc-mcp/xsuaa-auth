@@ -83,7 +83,9 @@ jobs:
       # `--provenance` attaches the attestation under OIDC; `--access public` is
       # required for a scoped package on first publish.
       # npm 11 refuses a prerelease version without an explicit dist-tag, and a
-      # beta must not become `latest`: versions with a hyphen go to `next`.
+      # beta must not become `latest`. The tag selector refuses an unsuffixed
+      # version while release-please is configured for prereleases.
       - name: Publish to npm
         run: |
-          npm publish --provenance --access public --tag "$(node -p "require('./package.json').version.includes('-') ? 'next' : 'latest'")"
+          npm_tag="$(node scripts/select-publish-tag.mjs)"
+          npm publish --provenance --access public --tag "$npm_tag"
