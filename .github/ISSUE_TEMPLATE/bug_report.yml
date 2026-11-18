@@ -47,10 +47,10 @@ body:
   - type: input
     id: sdk-version
     attributes:
-      label: "@modelcontextprotocol/sdk version"
-      placeholder: 1.28.0
+      label: MCP SDK package and version
+      placeholder: "@modelcontextprotocol/server 2.4.0, or @modelcontextprotocol/sdk 1.32.2"
     validations:
-      required: true
+      required: false
   - type: input
     id: express-version
     attributes:

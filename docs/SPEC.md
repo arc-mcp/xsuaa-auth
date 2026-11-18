@@ -1,6 +1,7 @@
 # Auth Module — SPEC (API-freeze candidate, v0)
 
 > **Status:** Draft spec — the API-freeze gate before any code. **Date:** 2026-06-17. **Companion:** [`RESEARCH.md`](./RESEARCH.md) (rationale + ADRs).
+> **2.0 (November 2026):** the MCP SDK peer dependency was removed; §3 and §8 carry the current contract and mark what is 1.x history.
 > **Decisions locked this round:** rate-limit **OUT** of v1 · principal propagation **IN** v1 (`./btp` sub-module) · SDK floor **`>=1.18.2`** · `express ^5.0.1` (Express 4 is moot — SDK hard-forces 5).
 
 This spec freezes: scope, entrypoints, dependency ranges, the logger contract, every public signature, the auth↔PP coupling contract, and the minimal-diff adoption path for each of the three consumers (arc-1, calmcp, LISA). Rationale and the version evidence live in `RESEARCH.md`; this document is the contract.
@@ -69,12 +70,12 @@ This spec freezes: scope, entrypoints, dependency ranges, the logger contract, e
 }
 ```
 > **Drift note (v0.1):** `undici ^8` was dropped from `dependencies`. The original plan kept it for a `proxyFetch` forward-proxy helper, but that helper is deferred (§14) and every call site uses Node's global `fetch`, so the dependency was dead weight. Re-add it if/when `proxyFetch` lands.
-- **`@modelcontextprotocol/sdk` peer `>=1.18.2 <2`** — `1.18.2` is the first version exposing `mcpAuthRouter({ resourceServerUrl })` (PR #858); all other primitives exist since 1.12, no breaking override changes 1.12→1.29. `<2` because a v2 monorepo split (auth relocates, Express becomes a separate adapter) is alpha — opt in only after it's GA + tested.
+- **1.x only, removed in 2.0 (see the 2.0 note above):** `@modelcontextprotocol/sdk` peer `>=1.18.2 <2` — `1.18.2` is the first version exposing `mcpAuthRouter({ resourceServerUrl })` (PR #858); all other primitives exist since 1.12, no breaking override changes 1.12→1.29. `<2` because a v2 monorepo split (auth relocates, Express becomes a separate adapter) is alpha — opt in only after it's GA + tested.
 - **`express` peer `^5.0.1`** — the SDK hard-depends on `express ^5.0.1` (since 1.6.0) / `^5.2.1` (since 1.26). Express 4 cannot coexist with the SDK's router. Don't tighten to `^5.2.1` (needlessly excludes SDK < 1.26 resolvers; the facade only uses stable 5.0 `RequestHandler`/`Router` types).
 - **`@sap/xssec` dependency `^4`** — leaf token validator; not a shared instance. **Pure CommonJS** (no ESM entry) → consume via `import xssec from '@sap/xssec'; const { createSecurityContext, XsuaaService } = xssec;` with `esModuleInterop`; documented as a known interop edge (§12).
 - **`@sap-cloud-sdk/connectivity ^4.7.0` dependency** — used only by `./btp`. All three consumers already pin this exact major, so no friction; a core-only consumer (calmcp) installs it unused (acceptable; calmcp has it already). (`undici` was originally listed here too but is dropped in v0.1 — see the drift note above.) `jose` is an **optional peer** (range `>=5 <7`, covers arc-1's 6.x and LISA's 5.x), lazy-imported so non-OIDC consumers (calmcp) need not install it.
 
-**CI peer test-matrix:** `1.18.2 + 5.0.1` (floor), `1.25.3 + 5.0.1` (last pre-1.26), `1.28 + 5.2.1` and `1.29 + 5.2.1` (older supported SDKs), `1.32.1 + 5.2.1` (current SDK). Node **22 + 24** (the package's `engines.node >= 22` floor — matches arc-1). A `tsc --noEmit` typecheck pinned at the `1.18.2 + 5.0.1` floor (excess-property errors surface only there).
+**CI peer test-matrix (1.x; 2.0 runs Express `5.0.1` and `5.2.1` only):** `1.18.2 + 5.0.1` (floor), `1.25.3 + 5.0.1` (last pre-1.26), `1.28 + 5.2.1` and `1.29 + 5.2.1` (older supported SDKs), `1.32.1 + 5.2.1` (current SDK). Node **22 + 24** (the package's `engines.node >= 22` floor — matches arc-1). A `tsc --noEmit` typecheck pinned at the `1.18.2 + 5.0.1` floor (excess-property errors surface only there).
 
 ---
 
@@ -97,8 +98,10 @@ export interface Logger {
 ## 6. Core auth API (`.`) — FROZEN
 
 ```ts
-// ─── Re-exported SDK types (behind the insulation layer, §8) ───
+// ─── Re-exported SDK surface (behind the insulation layer, §8) ───
 export type { AuthInfo, OAuthClientInformationFull } from './internal/sdk.js';
+export { mcpAuthRouter, requireBearerAuth, metadataHandler, OAuthError, InvalidTokenError,
+  InsufficientScopeError, InvalidGrantError, InvalidClientMetadataError } from './internal/sdk.js'; // since 2.0
 export type Verifier = (token: string) => Promise<AuthInfo>;
 
 // ─── Logger contract (§5) ───
@@ -244,7 +247,7 @@ Notes:
 - **api-key profiles** are not a package concept: arc-1 maps its `API_KEY_PROFILES` → `ApiKeyEntry[]` (`{key, scopes}`) before passing.
 - The facade does **not** include arc-1's Copilot `/authorize` bypass or reverse-proxy base-path overrides — those stay in arc-1's `startHttpServer` using the building blocks.
 - When `options.xsuaa` is omitted (api-key/OIDC only), the facade builds the chained verifier and returns bearer middleware **without** mounting the OAuth router/callback — mirroring arc-1's non-XSUAA path (`createStandardVerifier`).
-- **Verifier chain order is frozen as `XSUAA → OIDC → api-key`** (matches arc-1). The first accepted result wins; ordinary validation failures try the next independent method, and exhaustion throws `InvalidTokenError`. A validated principal denied by `requireUserToken` throws `XsuaaUserTokenRequiredError` immediately in either JWT slot; its stable own data code is also recognized across package copies and own data `Error.cause` wrappers, without executing getters. Ordinary cause cycles terminate safely. Proxy exception/cause values and malformed core JWT-verifier `AuthInfo` are terminal integration errors (generic 500 under native middleware), never fallback access. Do not overlap XSUAA/OIDC trust with a weaker principal policy. Use the XSUAA verifier directly on user-only XSUAA routes. Native SDK middleware maps principal denial to 403 (`forbidden`, not an `insufficient_scope` challenge) and invalid tokens to 401. No-OAuth-retry behavior is verified only for the tested TypeScript SDK clients, not all MCP clients. Generic scope errors retain the existing chain behavior. calmcp's PR adapts from its current api-key-first order (called out in its PR description).
+- **Verifier chain order is frozen as `XSUAA → OIDC → api-key`** (matches arc-1). The first accepted result wins; ordinary validation failures try the next independent method, and exhaustion throws `InvalidTokenError`. A validated principal denied by `requireUserToken` throws `XsuaaUserTokenRequiredError` immediately in either JWT slot; its stable own data code is also recognized across package copies and own data `Error.cause` wrappers, without executing getters. Ordinary cause cycles terminate safely. Proxy exception/cause values and malformed core JWT-verifier `AuthInfo` are terminal integration errors (generic 500 under the bearer middleware), never fallback access. Do not overlap XSUAA/OIDC trust with a weaker principal policy. Use the XSUAA verifier directly on user-only XSUAA routes. The package's `requireBearerAuth` maps principal denial to 403 (`forbidden`, not an `insufficient_scope` challenge) and invalid tokens to 401. No-OAuth-retry behavior is verified only for the tested TypeScript SDK clients, not all MCP clients. Generic scope errors retain the existing chain behavior. calmcp's PR adapts from its current api-key-first order (called out in its PR description).
 - **Verifier diagnostics** are best effort: synchronous debug/info/warn sink throws and returned Promise/thenable rejections are consumed, without awaiting delivery. Optional chain diagnostic projection is guarded and cannot select fallback. Core `AuthInfo` validity is checked separately from optional logging. This is not a new audit-delivery contract and does not supervise unreturned asynchronous work or synchronously blocking consumer code. Calls without data retain one argument and the logger receiver.
 - **CORS + COOP (browser / popup OAuth):** when `allowedOrigins` is set the facade applies a built-in exact-match CORS handler (`credentials:true` + MCP headers; no `cors` dep). The facade sets **no restrictive `Cross-Origin-Opener-Policy`** — popup OAuth (Copilot Studio, claude.ai) breaks under `COOP: same-origin`. Broad hardening (helmet CSP/HSTS) stays consumer-owned; a consumer adding helmet must disable COOP. arc-1 keeps its own `applySecurityMiddleware` via the building-block path.
 - **Redirect validation (normative):** XSUAA's `xs-security.json` allows the server's callback URL. For the pre-registered default client, `redirectUriPatterns` gates added URIs and the callback; keep patterns narrow and ensure `defaultRedirectUris` also match. DCR registration uses `validateRedirectUri`: HTTPS, loopback HTTP and known native schemes are accepted independently of patterns, which can permit extra custom schemes. DCR callbacks require an exact URI from the signed registration. Narrowing patterns does not restrict DCR HTTPS domains or known schemes; the optional `dcrRedirectUriPatterns` does: registration rejects non-matching URIs with `invalid_client_metadata` (audit `oauth_client_registration_rejected` with the host only), and `getClient` drops non-matching URIs from earlier signed registrations so the authorize and callback checks see the narrowed list. `[]` rejects every DCR redirect. DCR patterns match case-sensitive paths and queries, with case-insensitive schemes and hosts. Explicit browser approval remains mandatory for every client. The allowlist does not revoke existing access or refresh tokens; configure the same policy on every instance. Client custom schemes do not belong in `xs-security.json`.
@@ -310,9 +313,9 @@ export function resolveBTPDestination(name: string, logger?: Logger): Promise<{
 
 ## 8. SDK-insulation requirement (v2-proofing)
 
-> **2.0 change:** `src/internal/sdk.ts` now imports `@modelcontextprotocol/server-legacy/auth`, and the package re-exports `mcpAuthRouter`, `requireBearerAuth` and the OAuth error classes it throws. Consumers must mount those copies: the middleware maps errors by `instanceof`, so an SDK's own router or bearer middleware answers 500 for this package's errors.
+> **2.0 change:** `src/internal/sdk.ts` now imports `@modelcontextprotocol/server-legacy/auth`, and the package re-exports `mcpAuthRouter`, `requireBearerAuth`, `metadataHandler`, `OAuthError` and the OAuth error classes it throws. Consumers must mount those copies: the middleware maps errors by `instanceof`, so an SDK's own router or bearer middleware answers 500 for this package's errors.
 
-All `@modelcontextprotocol/sdk/server/auth/*` imports are confined to **one internal module** (`src/internal/sdk.ts`) that re-exports the symbols and types the package uses (`ProxyOAuthServerProvider`, `mcpAuthRouter`, `requireBearerAuth`, `OAuthRegisteredClientsStore`, `AuthInfo`, `OAuthClientInformationFull`) behind package-owned names. The SDK v2 monorepo split (auth → `@modelcontextprotocol/server`, Express → `@modelcontextprotocol/express`, path changes) then becomes a **one-file migration**. No other source file imports the SDK directly.
+All MCP SDK imports are confined to **one internal module** (`src/internal/sdk.ts`); no other source file imports an SDK package (`tests/sdk-boundary.test.ts` enforces it).
 
 ---
 
@@ -366,7 +369,7 @@ Out of module scope (stays consumer env): `SAP_ALLOW_*` / `SAP_ALLOWED_PACKAGES`
 - ESM-only; `exports` map (types-first, `default` last); `sideEffects:false`; `engines.node>=22`.
 - Build: plain `tsc` (`NodeNext`, `declaration:true`). **`isolatedDeclarations` is deferred** (not enabled in `tsconfig.json` as of v0.1): turning it on surfaces a small number of `TS9010`/`TS9017` "needs an explicit type annotation" errors (e.g. the `RESERVED_OAUTH_SCOPES` `Set` literal). The build is correct without it, and the perf/parallelism payoff `isolatedDeclarations` buys only matters at much larger scale, so it's a deliberate post-v1 cleanup (annotate the flagged exports, then flip the flag) rather than a blocker. New code SHOULD still be written isolatedDeclarations-clean (explicit annotations on exported `const`s) to keep the eventual flip a no-op.
 - `@sap/xssec` is **pure CJS** → default-import + destructure, `esModuleInterop`; README calls out this interop edge.
-- Publish gate: `publint && attw --pack . --profile esm-only` green; `npm test`; `tsc --noEmit` at the peer floor.
+- Publish gate: `publint && attw --pack . --profile esm-only` green; `npm test`; `tsc --noEmit`.
 - release-please (`node`, no `extra-files`) → `release_created`-gated npm publish via OIDC (Node ≥22.14 / npm ≥11.5.1, `id-token: write`, automatic provenance, no `NPM_TOKEN`).
 
 ---
@@ -384,7 +387,6 @@ Out of module scope (stays consumer env): `SAP_ALLOW_*` / `SAP_ALLOWED_PACKAGES`
 - **`proxyFetch` shared forward-proxy helper** — once arc-1's `AdtHttpClient` is otherwise touched (§7).
 - **`./testing` mocks** — mock `Verifier`/`Destination` for consumers' tests; v1.1 stretch.
 - **npm final name** (`@arc-mcp/xsuaa-auth` recommended), **docs-site choice** (VitePress recommended).
-- **SDK v2 path** — adopt only after v2 GA + tested; the §8 insulation makes it a one-file change.
 - **IAS / SAP Cloud Identity Services** (`@sap/xssec` `IdentityService`) — the package is XSUAA-specific by name; SAP is steering new apps toward IAS, so a sibling `IdentityService` verifier is a roadmap candidate, not v1.
 
 ---

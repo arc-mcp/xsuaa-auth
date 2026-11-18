@@ -62,7 +62,7 @@ updates:
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
       # Keep Express updates manual; SDK dev updates remain enabled.
-      # The peer matrix and peer-floor job check both supported ranges.
+      # The CI matrix checks the supported Express floor and current release.
       - dependency-name: "express"
 
   # ─── GitHub Actions ──────────────────────────────────────────────────────

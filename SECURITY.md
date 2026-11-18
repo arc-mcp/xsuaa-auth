@@ -62,7 +62,7 @@ covers every `picomatch` release through 4.0.7 and has no patched version as of 
 not in the production dependency graph or the published package, and its glob patterns come from
 this repository's own configuration. [audit-ci.json](./audit-ci.json) enforces the expiry. Remove
 the exception as soon as a fixed release is available; any extension requires a new maintainer
-decision. Other advisories still fail.
+decision. Other high and critical advisories still fail.
 
 Consuming applications maintain their own lockfiles. Refresh their transitive `node-forge`
 resolution to 1.4.3 or later; updating this repository's lockfile does not rewrite downstream locks.
