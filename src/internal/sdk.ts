@@ -23,6 +23,8 @@ export {
   InvalidGrantError,
   InvalidTokenError,
   mcpAuthRouter,
+  metadataHandler,
+  OAuthError,
   ProxyOAuthServerProvider,
 } from '@modelcontextprotocol/server-legacy/auth';
 

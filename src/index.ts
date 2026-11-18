@@ -17,9 +17,6 @@ export type { AuthOptions } from './facade.js';
 // ─── Facade ──────────────────────────────────────────────────────────
 export { setupHttpAuth } from './facade.js';
 // ─── SDK auth surface (behind the §8 insulation layer) ───────────────
-// Mount THESE, not an SDK's own copies: the middleware maps this package's
-// errors by `instanceof`, so a router/middleware from another SDK copy answers
-// 500 where 401/400 is due.
 export type { AuthInfo, OAuthClientInformationFull } from './internal/sdk.js';
 export {
   InsufficientScopeError,
@@ -27,6 +24,8 @@ export {
   InvalidGrantError,
   InvalidTokenError,
   mcpAuthRouter,
+  metadataHandler,
+  OAuthError,
   requireBearerAuth,
 } from './internal/sdk.js';
 // ─── Logger contract ─────────────────────────────────────────────────
