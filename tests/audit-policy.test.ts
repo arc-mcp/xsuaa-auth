@@ -67,6 +67,12 @@ describe('dependency audit gate', () => {
     return npmAudit({ ...CONFIG, directory });
   }
 
+  it('allowlists only the dev-only picomatch advisory, with an expiry', () => {
+    const allowlist = CONFIG.allowlist as Array<Record<string, { active: boolean; expiry: string }>>;
+    expect(allowlist.flatMap((entry) => Object.keys(entry))).toEqual(['GHSA-fc5q-39xc-vjpf']);
+    expect(Date.parse(allowlist[0]['GHSA-fc5q-39xc-vjpf'].expiry)).toBeLessThan(Date.parse('2027-01-01'));
+  });
+
   it('accepts a clean audit report', async () => {
     const result = await audit({
       auditReportVersion: 2,

@@ -55,6 +55,15 @@ The temporary `GHSA-86w9-cpqp-85rv` risk acceptance has been removed.
 All production and development dependencies remain audited; high/critical findings and audit
 failures block CI and publishing through [audit-ci.json](./audit-ci.json).
 
+Until **15 December 2026, 00:00 Europe/Berlin**, CI and publishing accept only
+[GHSA-fc5q-39xc-vjpf](https://github.com/advisories/GHSA-fc5q-39xc-vjpf), a ReDoS advisory that
+covers every `picomatch` release through 4.0.7 and has no patched version as of 18 November 2026.
+`picomatch` is reachable only through development tooling (`lint-staged`, `vitest`, `vite`); it is
+not in the production dependency graph or the published package, and its glob patterns come from
+this repository's own configuration. [audit-ci.json](./audit-ci.json) enforces the expiry. Remove
+the exception as soon as a fixed release is available; any extension requires a new maintainer
+decision. Other advisories still fail.
+
 Consuming applications maintain their own lockfiles. Refresh their transitive `node-forge`
 resolution to 1.4.3 or later; updating this repository's lockfile does not rewrite downstream locks.
 Concrete exposure through this package remains reportable.
