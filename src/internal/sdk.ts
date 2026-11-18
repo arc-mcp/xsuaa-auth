@@ -12,9 +12,11 @@
  */
 
 import {
+  type BearerAuthMiddlewareOptions,
   requireBearerAuth as legacyRequireBearerAuth,
   type OAuthRegisteredClientsStore,
 } from '@modelcontextprotocol/server-legacy/auth';
+import type { RequestHandler } from 'express';
 
 export type { AuthInfo, OAuthRegisteredClientsStore } from '@modelcontextprotocol/server-legacy/auth';
 export {
@@ -32,7 +34,7 @@ export {
  * The legacy middleware puts `resourceMetadataUrl` in its own 401/403 only. SDK v2 builds a
  * tool-level scope challenge from `AuthInfo`, so copy the URL there unless the verifier set one.
  */
-export function requireBearerAuth(options: Parameters<typeof legacyRequireBearerAuth>[0]) {
+export function requireBearerAuth(options: BearerAuthMiddlewareOptions): RequestHandler {
   const { verifier, resourceMetadataUrl } = options;
   if (!resourceMetadataUrl) return legacyRequireBearerAuth(options);
   return legacyRequireBearerAuth({
