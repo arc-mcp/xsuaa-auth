@@ -20,6 +20,7 @@ import type { RequestHandler } from 'express';
 
 export type { AuthInfo, OAuthRegisteredClientsStore } from '@modelcontextprotocol/server-legacy/auth';
 export {
+  getOAuthProtectedResourceMetadataUrl,
   InsufficientScopeError,
   InvalidClientMetadataError,
   InvalidGrantError,
@@ -32,20 +33,20 @@ export {
 
 /**
  * The legacy middleware puts `resourceMetadataUrl` in its own 401/403 only. SDK v2 builds a
- * tool-level scope challenge from `AuthInfo`, so copy the URL there unless the verifier set one.
+ * tool-level scope challenge from `AuthInfo`, so stamp the URL there as v2's middleware does:
+ * after validation, and only when the verifier set none.
  */
 export function requireBearerAuth(options: BearerAuthMiddlewareOptions): RequestHandler {
-  const { verifier, resourceMetadataUrl } = options;
-  if (!resourceMetadataUrl) return legacyRequireBearerAuth(options);
-  return legacyRequireBearerAuth({
-    ...options,
-    verifier: {
-      verifyAccessToken: async (token) => {
-        const info = await verifier.verifyAccessToken(token);
-        return { ...info, resourceMetadataUrl: info.resourceMetadataUrl ?? resourceMetadataUrl };
-      },
-    },
-  });
+  const bearer = legacyRequireBearerAuth(options);
+  const { resourceMetadataUrl } = options;
+  if (!resourceMetadataUrl) return bearer;
+  return (req, res, next) =>
+    bearer(req, res, (err?: unknown) => {
+      if (!err && req.auth && req.auth.resourceMetadataUrl === undefined) {
+        req.auth = { ...req.auth, resourceMetadataUrl };
+      }
+      next(err);
+    });
 }
 
 /** server-legacy does not re-export this type; derive it from the store contract. */

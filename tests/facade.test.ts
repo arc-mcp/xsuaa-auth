@@ -155,6 +155,16 @@ describe('setupHttpAuth — xsuaa mode', () => {
     expect(res.body.resourceMetadataUrl).toBe(`${APP_URL}/.well-known/oauth-protected-resource/mcp`);
   });
 
+  it('challenges with the metadata URL the router serves when appUrl has a path', async () => {
+    const { app, logger } = freshApp();
+    const mw = setupHttpAuth(app, { xsuaa: { credentials: XSUAA_CREDS, appUrl: `${APP_URL}/gateway` } }, logger);
+    if (!mw) throw new Error('expected bearer middleware');
+    app.post('/mcp', mw, (_req, res) => res.json({ ok: true }));
+    const challenge = (await request(app).post('/mcp')).headers['www-authenticate'] as string;
+    const url = /resource_metadata="([^"]+)"/.exec(challenge)?.[1] ?? '';
+    expect((await request(app).get(new URL(url).pathname)).status).toBe(200);
+  });
+
   it('answers 400 invalid_client_metadata for a DCR redirect outside dcrRedirectUriPatterns', async () => {
     const { app, logger } = freshApp();
     setupHttpAuth(
@@ -269,5 +279,33 @@ describe('setupHttpAuth — CORS + COOP', () => {
     app.get('/health', (_req, res) => res.json({ ok: true }));
     const res = await request(app).get('/health').set('Origin', 'https://evil.example.com');
     expect(res.headers['access-control-allow-origin']).toBeUndefined();
+  });
+});
+
+describe('requireBearerAuth — AuthInfo stamping', () => {
+  it('validates the verifier result itself and keeps a metadata URL the verifier set', async () => {
+    const { requireBearerAuth } = await import('../src/index.js');
+    // `expiresAt` as a prototype getter: a copy made before validation would lose it (401).
+    class Info {
+      token = 't';
+      clientId = 'c';
+      scopes = ['read'];
+      resourceMetadataUrl = 'https://verifier.example/meta';
+      get expiresAt() {
+        return Math.floor(Date.now() / 1000) + 60;
+      }
+    }
+    const app = express();
+    app.post(
+      '/mcp',
+      requireBearerAuth({
+        verifier: { verifyAccessToken: async () => new Info() },
+        resourceMetadataUrl: 'https://configured.example/meta',
+      }),
+      (req, res) => res.json({ url: req.auth?.resourceMetadataUrl, kept: req.auth instanceof Info }),
+    );
+    const res = await request(app).post('/mcp').set('Authorization', 'Bearer t');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ url: 'https://verifier.example/meta', kept: true });
   });
 });
