@@ -1,22 +1,28 @@
 /**
  * SDK insulation layer (SPEC §8).
  *
- * This is the ONLY module in the package that imports from
- * `@modelcontextprotocol/sdk/server/auth/*`. The SDK v2 monorepo split relocates
- * these paths (auth → `@modelcontextprotocol/server`, Express → a separate adapter),
- * so confining the imports here makes that migration a one-file change. No other
- * source file may import the SDK directly.
+ * The ONLY module that imports MCP SDK auth code. MCP SDK v2 dropped the OAuth
+ * authorization-server helpers from `@modelcontextprotocol/server`; the frozen v1
+ * copy lives in `@modelcontextprotocol/server-legacy/auth`, which this package
+ * depends on directly so it works beside SDK v1 or v2 (or neither).
+ *
+ * Router, bearer middleware and error classes MUST come from this one copy: the
+ * middleware maps errors by `instanceof`, so an error class from another SDK copy
+ * turns a 401/400 into a 500. The package re-exports them for that reason.
  */
 
-export type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/server/auth/clients.js';
+import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/server-legacy/auth';
+
+export type { AuthInfo, OAuthRegisteredClientsStore } from '@modelcontextprotocol/server-legacy/auth';
 export {
   InsufficientScopeError,
   InvalidClientMetadataError,
   InvalidGrantError,
   InvalidTokenError,
-} from '@modelcontextprotocol/sdk/server/auth/errors.js';
-export { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
-export { ProxyOAuthServerProvider } from '@modelcontextprotocol/sdk/server/auth/providers/proxyProvider.js';
-export { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
-export type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
-export type { OAuthClientInformationFull } from '@modelcontextprotocol/sdk/shared/auth.js';
+  mcpAuthRouter,
+  ProxyOAuthServerProvider,
+  requireBearerAuth,
+} from '@modelcontextprotocol/server-legacy/auth';
+
+/** server-legacy does not re-export this type; derive it from the store contract. */
+export type OAuthClientInformationFull = NonNullable<Awaited<ReturnType<OAuthRegisteredClientsStore['getClient']>>>;

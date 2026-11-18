@@ -18,7 +18,7 @@
  *
  * This example intentionally stops at "auth works": it does not wire a real MCP
  * transport. The package contributes the auth middleware + OAuth router; the MCP
- * server (e.g. @modelcontextprotocol/sdk's StreamableHTTPServerTransport) is
+ * server (MCP SDK v1 or v2 — see "Mounting on an SDK v2 server" in the README) is
  * yours to mount on `/mcp` behind the returned `bearer` middleware.
  */
 

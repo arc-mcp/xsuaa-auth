@@ -1,6 +1,6 @@
 # @arc-mcp/xsuaa-auth
 
-**XSUAA / OAuth authentication + SAP BTP principal propagation for [Model Context Protocol](https://modelcontextprotocol.io) servers** built on Express and [`@modelcontextprotocol/sdk`](https://github.com/modelcontextprotocol/typescript-sdk).
+**XSUAA / OAuth authentication + SAP BTP principal propagation for [Model Context Protocol](https://modelcontextprotocol.io) servers** built on Express. Works with the [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk) v1 (`@modelcontextprotocol/sdk`) and v2 (`@modelcontextprotocol/server`).
 
 [![CI](https://github.com/arc-mcp/xsuaa-auth/actions/workflows/ci.yml/badge.svg)](https://github.com/arc-mcp/xsuaa-auth/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/arc-mcp/xsuaa-auth/actions/workflows/codeql.yml/badge.svg)](https://github.com/arc-mcp/xsuaa-auth/actions/workflows/codeql.yml)
@@ -21,18 +21,19 @@ Two API layers, same package: a **plug-and-play facade** for the common flow, an
 npm install @arc-mcp/xsuaa-auth
 ```
 
-ESM-only, Node **>= 22**. You also need these **peer dependencies** (the package shares the host's Express + MCP SDK instances rather than bundling its own):
+ESM-only, Node **>= 22**. You also need these **peer dependencies**:
 
 | Peer | Range | Required? |
 |------|-------|-----------|
-| [`@modelcontextprotocol/sdk`](https://www.npmjs.com/package/@modelcontextprotocol/sdk) | `>=1.18.2 <2` | **yes** — `1.18.2` is the first version exposing `mcpAuthRouter({ resourceServerUrl })` |
-| [`express`](https://www.npmjs.com/package/express) | `^5.0.1` | **yes** — the SDK hard-depends on Express 5; v4 cannot coexist with its router |
+| [`express`](https://www.npmjs.com/package/express) | `^5.0.1` | **yes** — the package mounts its routes and middleware on your app |
 | [`jose`](https://www.npmjs.com/package/jose) | `>=5 <7` | **optional** — only for the OIDC verifier; lazy-imported, so non-OIDC consumers can skip it |
 
 ```bash
-npm install @modelcontextprotocol/sdk express
+npm install express
 npm install jose            # only if you use createOidcVerifier / AuthOptions.oidc
 ```
+
+**No MCP SDK peer.** The OAuth router, bearer middleware and error classes come from [`@modelcontextprotocol/server-legacy`](https://www.npmjs.com/package/@modelcontextprotocol/server-legacy) (the frozen copy of the SDK v1 auth code, which SDK v2 no longer ships in its server package). It is a regular dependency, so the package runs next to SDK v1, SDK v2, or neither. npm prints a deprecation notice for it on install; that is expected.
 
 `@sap/xssec` and `@sap-cloud-sdk/connectivity` are regular dependencies and install automatically.
 
@@ -96,9 +97,9 @@ import {
   StatelessDcrClientStore,
   OAuthStateCodec,
   validateRedirectUri,
+  mcpAuthRouter,
+  requireBearerAuth,
 } from '@arc-mcp/xsuaa-auth';
-import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
-import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 
 // 1. The XSUAA OAuth provider also hands you the DCR store + state codec.
 const { provider, clientStore, stateCodec } = createXsuaaOAuthProvider(credentials, appUrl, {
@@ -121,6 +122,18 @@ const verifier = createChainedTokenVerifier(
 app.get('/oauth/callback', createOAuthCallbackHandler(stateCodec, clientStore, { logger }));
 app.use(mcpAuthRouter({ provider, issuerUrl, baseUrl, resourceServerUrl, scopesSupported, resourceName }));
 app.all('/mcp', requireBearerAuth({ verifier: { verifyAccessToken: verifier }, resourceMetadataUrl }), myMcpHandler);
+```
+
+> **Take `mcpAuthRouter`, `requireBearerAuth` and the OAuth error classes from this package, not from an MCP SDK.** The middleware maps errors by class identity. A router or bearer middleware from another SDK copy does not recognise this package's errors and answers `500` where `401` or `400` is due. A custom verifier should throw the `InvalidTokenError` / `InsufficientScopeError` exported here.
+
+**Mounting on an SDK v2 server.** `requireBearerAuth` sets `req.auth`; `toNodeHandler` from `@modelcontextprotocol/node` forwards it to handlers as `ctx.http.authInfo`. Behind `express.json()` pass the parsed body explicitly, because Express hands `next` as the third argument and the adapter ignores it:
+
+```ts
+import { toNodeHandler } from '@modelcontextprotocol/node';
+import { createMcpHandler } from '@modelcontextprotocol/server';
+
+const mcp = toNodeHandler(createMcpHandler(() => buildServer())); // serves 2026-07-28 and 2025-era clients
+app.all('/mcp', express.json(), bearer, (req, res) => mcp(req, res, req.body));
 ```
 
 Each verifier accepts an optional injected **`expandScopes`** policy hook (default identity), applied **exactly once** by the sub-verifier that produces the `AuthInfo`. `createChainedTokenVerifier` does **not** re-apply it on top of a sub-verifier's result (so a non-idempotent expander runs once, not twice) — it only uses the hook for the api-key verifier it builds from `config.apiKeys`. arc-1 passes its `authz/policy` function so `AuthInfo` carries expanded scopes; other consumers omit it. The package owns **no** scope/tool policy — it's injected, never owned.
@@ -284,6 +297,19 @@ Revoking a local refresh envelope unwraps it for its issuing client, regardless
 of `token_type_hint`. Invalid local envelopes are a successful no-op. Existing
 raw access-token and legacy upstream-token revocation remains supported; raw-token
 revocation does not establish a local client binding.
+
+### Upgrading from 1.x to 2.0
+
+2.0 removes the `@modelcontextprotocol/sdk` peer dependency. `setupHttpAuth` users change nothing. If you mount the SDK's router or bearer middleware yourself, or import its OAuth error classes, switch those imports to this package:
+
+```diff
+-import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
+-import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
+-import { InvalidTokenError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
++import { InvalidTokenError, mcpAuthRouter, requireBearerAuth } from '@arc-mcp/xsuaa-auth';
+```
+
+Skipping this step does not fail at build time: invalid tokens and rejected registrations then answer `500` instead of `401` / `400`. Endpoints, client ids, tokens and the wire format are unchanged, so no client has to re-register.
 
 ### Upgrading deployments
 

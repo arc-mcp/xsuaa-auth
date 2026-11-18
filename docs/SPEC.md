@@ -44,13 +44,15 @@ This spec freezes: scope, entrypoints, dependency ranges, the logger contract, e
   "./package.json": "./package.json"
 }
 ```
-- `.` — core auth. Deps it needs: `@modelcontextprotocol/sdk` (peer), `express` (peer), `@sap/xssec`, `jose` (optional/lazy).
+- `.` — core auth. Deps it needs: `@modelcontextprotocol/server-legacy`, `express` (peer), `@sap/xssec`, `jose` (optional/lazy).
 - `./btp` — PP. Deps it needs: `@sap-cloud-sdk/connectivity`. (Originally also `undici`; dropped in v0.1 — the code uses Node's global `fetch`, and the `proxyFetch` forward-proxy helper that would have needed `undici.ProxyAgent` is deferred, §14.)
 - **No `./rate-limit` in v1.** `./testing` (mock verifiers/clients) is a v1.1 stretch (§14).
 
 ---
 
 ## 4. Dependencies (FROZEN ranges)
+
+> **2.0 change:** the `@modelcontextprotocol/sdk` peer is gone. SDK v2 removed the OAuth authorization-server helpers from its server package, so the package now depends on `@modelcontextprotocol/server-legacy ^2.4.0` (the frozen v1 copy) and runs beside SDK v1 or v2. The peer block and SDK matrix below describe 1.x; the CI matrix now varies Express only, and `tests/sdk-consumers.test.ts` covers a v1 and a v2 server. Vendoring the authorization-server code is the fallback if server-legacy stops being published or carries an unpatched advisory.
 
 ```jsonc
 "peerDependencies": {
@@ -307,6 +309,8 @@ export function resolveBTPDestination(name: string, logger?: Logger): Promise<{
 ---
 
 ## 8. SDK-insulation requirement (v2-proofing)
+
+> **2.0 change:** `src/internal/sdk.ts` now imports `@modelcontextprotocol/server-legacy/auth`, and the package re-exports `mcpAuthRouter`, `requireBearerAuth` and the OAuth error classes it throws. Consumers must mount those copies: the middleware maps errors by `instanceof`, so an SDK's own router or bearer middleware answers 500 for this package's errors.
 
 All `@modelcontextprotocol/sdk/server/auth/*` imports are confined to **one internal module** (`src/internal/sdk.ts`) that re-exports the symbols and types the package uses (`ProxyOAuthServerProvider`, `mcpAuthRouter`, `requireBearerAuth`, `OAuthRegisteredClientsStore`, `AuthInfo`, `OAuthClientInformationFull`) behind package-owned names. The SDK v2 monorepo split (auth → `@modelcontextprotocol/server`, Express → `@modelcontextprotocol/express`, path changes) then becomes a **one-file migration**. No other source file imports the SDK directly.
 
