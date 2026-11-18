@@ -128,6 +128,12 @@ export class XsuaaProxyOAuthProvider extends ProxyOAuthServerProvider {
   }
 
   /**
+   * RFC 9207: the base proxy says `false` because its upstream answers the client directly.
+   * Here `/oauth/callback` does, and it appends the `iss` carried in the signed state.
+   */
+  override authorizationResponseIssParameterSupported = true;
+
+  /**
    * Override clientsStore to expose registerClient for DCR.
    * The MCP SDK checks this to decide whether to advertise
    * registration_endpoint in OAuth metadata and handle POST /register.
@@ -173,6 +179,7 @@ export class XsuaaProxyOAuthProvider extends ProxyOAuthServerProvider {
       clientRedirectUri: params.redirectUri,
       clientId: _client.client_id,
       browserBinding,
+      issuer: params.issuer,
     });
 
     const targetUrl = new URL(this.xsuaaAuthUrl);

@@ -317,11 +317,10 @@ Skipping this step fails neither the build nor a happy-path test: invalid tokens
 
 Client ids, tokens and refresh tokens issued by 1.2 keep working, so no client has to re-register. Three responses differ on the wire:
 
-- Authorization-server metadata now states `authorization_response_iss_parameter_supported: false`.
-- Error redirects from `/authorize` (denied approval, missing PKCE) carry an `iss` parameter. The successful callback does not.
+- Authorization-server metadata now states `authorization_response_iss_parameter_supported: true`, and every redirect back to the client (the code, a denied approval, an identity-provider error) carries `iss`, equal to the metadata `issuer` ([RFC 9207](https://www.rfc-editor.org/rfc/rfc9207.html), which the 2026-07-28 MCP specification asks for). A client that checks it rejects a response without it, so upgrade every instance before resuming sign-ins.
 - `POST /register` checks `application_type`: a non-string value answers `400 invalid_client_metadata` (1.x ignored the field) and a string value is echoed in the response.
 
-Coming from 1.1.0 or older with your own `/oauth/callback` route: the provider only exchanges authorization codes wrapped by `createOAuthCallbackHandler`, so mount that handler.
+If you serve your own `/oauth/callback` route instead of `createOAuthCallbackHandler`, mount that handler: it wraps the authorization code the provider exchanges (since 1.1.1) and appends `iss`.
 
 ### Upgrading deployments
 

@@ -98,10 +98,19 @@ interface StatePayload {
   exp: number;
   /** Present only after explicit browser consent. Legacy tokens are not usable at the callback. */
   browser?: BrowserBinding;
+  /** This server's issuer, for the callback's RFC 9207 `iss` parameter. */
+  iss?: string;
 }
 
 export type DecodeResult =
-  | { kind: 'ok'; clientState?: string; clientRedirectUri: string; clientId: string; browserBinding?: BrowserBinding }
+  | {
+      kind: 'ok';
+      clientState?: string;
+      clientRedirectUri: string;
+      clientId: string;
+      browserBinding?: BrowserBinding;
+      issuer?: string;
+    }
   | { kind: 'error'; reason: 'malformed' | 'bad_signature' | 'invalid_payload' | 'expired' };
 
 /**
@@ -135,6 +144,7 @@ export class OAuthStateCodec {
     clientRedirectUri: string;
     clientId: string;
     browserBinding?: BrowserBinding;
+    issuer?: string;
     now?: number;
   }): string {
     const nowSec = Math.floor((input.now ?? Date.now()) / 1000);
@@ -148,6 +158,7 @@ export class OAuthStateCodec {
     if (input.clientState !== undefined) {
       payload.s = input.clientState;
     }
+    if (input.issuer !== undefined) payload.iss = input.issuer;
     if (input.browserBinding !== undefined) {
       if (!isBrowserBinding(input.browserBinding)) throw new Error('Invalid OAuth browser binding');
       payload.browser = input.browserBinding;
@@ -196,6 +207,7 @@ export class OAuthStateCodec {
       clientRedirectUri: payload.r,
       clientId: payload.cid,
       ...(payload.browser ? { browserBinding: payload.browser } : {}),
+      ...(payload.iss ? { issuer: payload.iss } : {}),
     };
   }
 
@@ -228,6 +240,7 @@ function parsePayload(payloadB64: string): StatePayload | undefined {
     if (typeof obj.exp !== 'number' || !Number.isFinite(obj.exp)) return undefined;
     if (obj.s !== undefined && typeof obj.s !== 'string') return undefined;
     if (obj.browser !== undefined && (!isBrowserBinding(obj.browser) || obj.exp <= 0)) return undefined;
+    if (obj.iss !== undefined && typeof obj.iss !== 'string') return undefined;
     return {
       v: 1,
       s: obj.s as string | undefined,
@@ -235,6 +248,7 @@ function parsePayload(payloadB64: string): StatePayload | undefined {
       cid: obj.cid,
       exp: obj.exp,
       ...(obj.browser ? { browser: obj.browser as BrowserBinding } : {}),
+      ...(obj.iss ? { iss: obj.iss } : {}),
     };
   } catch {
     return undefined;

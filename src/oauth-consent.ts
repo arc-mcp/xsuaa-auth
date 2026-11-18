@@ -16,6 +16,8 @@ export interface AuthorizationParams {
   codeChallenge: string;
   redirectUri: string;
   resource?: URL;
+  /** The router's issuer; ends up as `iss` on the callback redirect (RFC 9207). */
+  issuer?: string;
 }
 
 function sameValue(left: string, right: string): boolean {
