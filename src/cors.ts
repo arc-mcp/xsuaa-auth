@@ -42,7 +42,7 @@ export function applyCors(app: Express, allowedOrigins: readonly string[]): void
       res.setHeader('Access-Control-Allow-Headers', req.headers['access-control-request-headers'] ?? ALLOW_HEADERS);
       res.setHeader('Access-Control-Expose-Headers', EXPOSE_HEADERS);
       // `Vary` so caches don't serve one origin's (or one preflight's) CORS headers to another.
-      res.setHeader('Vary', 'Origin, Access-Control-Request-Headers');
+      res.vary('Origin, Access-Control-Request-Headers');
 
       if (req.method === 'OPTIONS') {
         res.status(204).end();
