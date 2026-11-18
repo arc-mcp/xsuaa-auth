@@ -84,5 +84,7 @@ jobs:
       # attach a provenance attestation automatically under OIDC; the explicit
       # flags below are belt-and-suspenders. `--access public` is required for a
       # scoped package on first publish.
+      # npm 11 refuses a prerelease version without an explicit dist-tag, and a
+      # beta must not become `latest`: versions with a hyphen go to `next`.
       - name: Publish to npm
-        run: npm publish --provenance --access public
+        run: npm publish --provenance --access public --tag "$(node -p "require('./package.json').version.includes('-') ? 'next' : 'latest'")"
