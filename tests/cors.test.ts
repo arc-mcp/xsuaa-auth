@@ -51,6 +51,19 @@ describe('applyCors — allowed origin', () => {
     expect(res.headers['access-control-allow-credentials']).toBe('true');
   });
 
+  it('allows the headers an SDK v2 browser client sends and exposes the bearer challenge', async () => {
+    const requested = 'authorization,content-type,mcp-method,mcp-name,mcp-param-region,mcp-protocol-version';
+    const res = await request(buildApp(['https://app.example.com']))
+      .options('/mcp')
+      .set('Origin', 'https://app.example.com')
+      .set('Access-Control-Request-Method', 'POST')
+      .set('Access-Control-Request-Headers', requested);
+    expect(res.status).toBe(204);
+    expect(res.headers['access-control-allow-headers']).toBe(requested);
+    expect(res.headers['access-control-expose-headers']).toContain('WWW-Authenticate');
+    expect(res.headers.vary).toContain('Access-Control-Request-Headers');
+  });
+
   it('reflects only the exact origin from a multi-origin allowlist', async () => {
     const app = buildApp(['https://a.example.com', 'https://b.example.com']);
     const resA = await request(app).get('/health').set('Origin', 'https://a.example.com');
