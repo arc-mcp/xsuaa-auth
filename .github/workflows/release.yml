@@ -87,4 +87,5 @@ jobs:
       # npm 11 refuses a prerelease version without an explicit dist-tag, and a
       # beta must not become `latest`: versions with a hyphen go to `next`.
       - name: Publish to npm
-        run: npm publish --provenance --access public --tag "$(node -p "require('./package.json').version.includes('-') ? 'next' : 'latest'")"
+        run: |
+          npm publish --provenance --access public --tag "$(node -p "require('./package.json').version.includes('-') ? 'next' : 'latest'")"
