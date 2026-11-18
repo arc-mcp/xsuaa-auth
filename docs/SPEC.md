@@ -53,7 +53,7 @@ This spec freezes: scope, entrypoints, dependency ranges, the logger contract, e
 
 ## 4. Dependencies (FROZEN ranges)
 
-> **2.0 change:** the `@modelcontextprotocol/sdk` peer is gone. SDK v2 removed the OAuth authorization-server helpers from its server package, so the package now depends on `@modelcontextprotocol/server-legacy ^2.4.0` (the frozen v1 copy) and runs beside SDK v1 or v2. The peer block and SDK matrix below describe 1.x; the CI matrix now varies Express only, and `tests/sdk-consumers.test.ts` covers a v1 and a v2 server. Vendoring the authorization-server code is the fallback if server-legacy stops being published or carries an unpatched advisory.
+> **2.0 change:** the `@modelcontextprotocol/sdk` peer is gone. SDK v2 removed the OAuth authorization-server helpers from its server package, so the package now depends on `@modelcontextprotocol/server-legacy` at an exact version (the frozen v1 copy, planned for removal in SDK v3) and runs beside SDK v1 or v2. The peer block and SDK matrix below describe 1.x; the CI matrix now varies Express only, and `tests/sdk-consumers.test.ts` covers a v1 and a v2 server. Vendoring the authorization-server code is the fallback if server-legacy stops being published or carries an unpatched advisory.
 
 ```jsonc
 "peerDependencies": {

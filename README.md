@@ -33,7 +33,7 @@ npm install express
 npm install jose            # only if you use createOidcVerifier / AuthOptions.oidc
 ```
 
-**No MCP SDK peer.** The OAuth router, bearer middleware and error classes come from [`@modelcontextprotocol/server-legacy`](https://www.npmjs.com/package/@modelcontextprotocol/server-legacy) (the frozen copy of the SDK v1 auth code, which SDK v2 no longer ships in its server package). It is a regular dependency, so the package runs next to SDK v1, SDK v2, or neither. npm prints a deprecation notice for it on install; that is expected.
+**No MCP SDK peer.** The OAuth router, bearer middleware and error classes come from [`@modelcontextprotocol/server-legacy`](https://www.npmjs.com/package/@modelcontextprotocol/server-legacy) (the frozen copy of the SDK v1 auth code, which SDK v2 no longer ships in its server package). It is a regular dependency, pinned to an exact version because the OAuth wire behaviour comes from it, so the package runs next to SDK v1, SDK v2, or neither. npm prints a deprecation notice for it on install; that is expected. The SDK plans to remove that package in v3; this package will then carry the code itself, without a change for consumers.
 
 `@sap/xssec` and `@sap-cloud-sdk/connectivity` are regular dependencies and install automatically.
 
@@ -126,17 +126,26 @@ app.all('/mcp', requireBearerAuth({ verifier: { verifyAccessToken: verifier }, r
 
 > **Take `mcpAuthRouter`, `requireBearerAuth` and the OAuth error classes from this package, not from an MCP SDK.** The middleware maps errors by class identity. A router or bearer middleware from another SDK copy does not recognise this package's errors and answers `500` where `401` or `400` is due. A verifier passed straight to `requireBearerAuth` should throw the `InvalidTokenError` (401) / `InsufficientScopeError` (403) exported here. Inside `createChainedTokenVerifier` an ordinary scope error from one method lets the next one try, and exhaustion answers 401.
 
-**Mounting on an SDK v2 server.** `requireBearerAuth` sets `req.auth`; `toNodeHandler` from `@modelcontextprotocol/node` forwards it to handlers as `ctx.http.authInfo`. Behind `express.json()` pass the parsed body explicitly, because Express hands `next` as the third argument and the adapter ignores it:
+**Mounting on an SDK v2 server.** This follows the SDK's [Express recipe](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/serving/express.md). `requireBearerAuth` sets `req.auth`; `toNodeHandler` from `@modelcontextprotocol/node` forwards it to handlers as `ctx.http.authInfo`. Pass the parsed body explicitly, because Express hands `next` as the third argument and the adapter ignores it:
 
 ```ts
+import { createMcpExpressApp } from '@modelcontextprotocol/express';
 import { toNodeHandler } from '@modelcontextprotocol/node';
 import { createMcpHandler } from '@modelcontextprotocol/server';
 
+// express() with express.json() and Host/Origin validation (hostnames, port-agnostic).
+const app = createMcpExpressApp({
+  host: '0.0.0.0',
+  allowedHosts: ['mcp.example.com'],
+  allowedOrigins: ['claude.ai'], // browser clients; requests without an Origin header always pass
+});
 const bearer = setupHttpAuth(app, options);
 if (!bearer) throw new Error('no auth method configured'); // undefined only when none is set
 const mcp = toNodeHandler(createMcpHandler(() => buildServer())); // serves 2026-07-28 and 2025-era clients
-app.all('/mcp', express.json(), bearer, (req, res) => mcp(req, res, req.body));
+app.all('/mcp', bearer, (req, res) => mcp(req, res, req.body));
 ```
+
+The MCP transport requires the host to reject requests with an unexpected `Origin`, and `createMcpHandler` leaves that to you. This package's `allowedOrigins` only adds CORS headers; it does not reject anything. Use `createMcpExpressApp` (or the `Host`/`Origin` guards from `@modelcontextprotocol/node`) for the validation. On a non-localhost bind it checks `Origin` only when `allowedOrigins` is given. List a browser client's origin in both places: as a hostname there, as a full origin here.
 
 Each verifier accepts an optional injected **`expandScopes`** policy hook (default identity), applied **exactly once** by the sub-verifier that produces the `AuthInfo`. `createChainedTokenVerifier` does **not** re-apply it on top of a sub-verifier's result (so a non-idempotent expander runs once, not twice) — it only uses the hook for the api-key verifier it builds from `config.apiKeys`. arc-1 passes its `authz/policy` function so `AuthInfo` carries expanded scopes; other consumers omit it. The package owns **no** scope/tool policy — it's injected, never owned.
 
@@ -262,6 +271,10 @@ client and return address before token exchange; XSUAA continues to enforce PKCE
 single use. Concurrent tabs and multiple instances work without a shared session store
 when their public URL and signing secret agree. Reverse proxies must preserve Cookie
 and Origin headers and advertise the correct public `appUrl`, including its path prefix.
+With a path prefix, RFC 9728 places the protected-resource document at the origin root
+(`/.well-known/oauth-protected-resource/<prefix>/mcp`), so the proxy must route that path
+to this server as well. Authorization-server metadata is served at
+`/.well-known/oauth-authorization-server` only, not at the path-specific location.
 
 Existing client IDs remain valid. Sign-ins in flight during the upgrade must restart:
 legacy unbound state and raw upstream authorization codes are rejected.
@@ -315,7 +328,7 @@ The package exports `mcpAuthRouter`, `requireBearerAuth`, `metadataHandler`, the
 
 Skipping this step fails neither the build nor a happy-path test: invalid tokens and rejected registrations then answer `500` instead of `401` / `400`. Send a wrong token and a disallowed registration through your mounted app to check.
 
-Client ids, tokens and refresh tokens issued by 1.2 keep working, so no client has to re-register. Three responses differ on the wire:
+Client ids keep working, and so do refresh tokens issued by 1.2.1, so no client has to re-register. (A refresh token from 1.2.0 or older already required a fresh sign-in on 1.2.1.) Three responses differ on the wire:
 
 - Authorization-server metadata now states `authorization_response_iss_parameter_supported: true`, and every redirect back to the client (the code, a denied approval, an identity-provider error) carries `iss`, equal to the metadata `issuer` ([RFC 9207](https://www.rfc-editor.org/rfc/rfc9207.html), which the 2026-07-28 MCP specification asks for). A client that checks it rejects a response without it, so upgrade every instance before resuming sign-ins.
 - `POST /register` checks `application_type`: a non-string value answers `400 invalid_client_metadata` (1.x ignored the field) and a string value is echoed in the response.
