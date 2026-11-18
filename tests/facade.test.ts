@@ -142,6 +142,19 @@ describe('setupHttpAuth — xsuaa mode', () => {
     expect(res.status).toBe(401);
   });
 
+  it('puts the resource metadata URL in AuthInfo, where SDK v2 reads it for a tool-level scope challenge', async () => {
+    const { app, logger } = freshApp();
+    const mw = setupHttpAuth(
+      app,
+      { xsuaa: { credentials: XSUAA_CREDS, appUrl: APP_URL }, apiKeys: [{ key: 'k', scopes: ['read'] }] },
+      logger,
+    );
+    if (!mw) throw new Error('expected bearer middleware');
+    app.post('/mcp', mw, (req, res) => res.json((req as { auth?: unknown }).auth));
+    const res = await request(app).post('/mcp').set('Authorization', 'Bearer k');
+    expect(res.body.resourceMetadataUrl).toBe(`${APP_URL}/.well-known/oauth-protected-resource/mcp`);
+  });
+
   it('answers 400 invalid_client_metadata for a DCR redirect outside dcrRedirectUriPatterns', async () => {
     const { app, logger } = freshApp();
     setupHttpAuth(

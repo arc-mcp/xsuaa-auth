@@ -11,7 +11,10 @@
  * turns a 401/400 into a 500. The package re-exports them for that reason.
  */
 
-import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/server-legacy/auth';
+import {
+  requireBearerAuth as legacyRequireBearerAuth,
+  type OAuthRegisteredClientsStore,
+} from '@modelcontextprotocol/server-legacy/auth';
 
 export type { AuthInfo, OAuthRegisteredClientsStore } from '@modelcontextprotocol/server-legacy/auth';
 export {
@@ -21,8 +24,25 @@ export {
   InvalidTokenError,
   mcpAuthRouter,
   ProxyOAuthServerProvider,
-  requireBearerAuth,
 } from '@modelcontextprotocol/server-legacy/auth';
+
+/**
+ * The legacy middleware puts `resourceMetadataUrl` in its own 401/403 only. SDK v2 builds a
+ * tool-level scope challenge from `AuthInfo`, so copy the URL there unless the verifier set one.
+ */
+export function requireBearerAuth(options: Parameters<typeof legacyRequireBearerAuth>[0]) {
+  const { verifier, resourceMetadataUrl } = options;
+  if (!resourceMetadataUrl) return legacyRequireBearerAuth(options);
+  return legacyRequireBearerAuth({
+    ...options,
+    verifier: {
+      verifyAccessToken: async (token) => {
+        const info = await verifier.verifyAccessToken(token);
+        return { ...info, resourceMetadataUrl: info.resourceMetadataUrl ?? resourceMetadataUrl };
+      },
+    },
+  });
+}
 
 /** server-legacy does not re-export this type; derive it from the store contract. */
 export type OAuthClientInformationFull = NonNullable<Awaited<ReturnType<OAuthRegisteredClientsStore['getClient']>>>;
