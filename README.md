@@ -210,7 +210,6 @@ The facade's configuration object. All fields are optional except where noted.
 | `xsuaa.resourceName` | `string` | SDK default | `resource_name` in the protected-resource metadata. |
 | `xsuaa.scopesSupported` | `string[]` | — | Advertised in OAuth metadata. **Also threaded to the XSUAA + OIDC verifiers as `acceptedScopes`** — set it to your own scope names (e.g. `['Viewer']`) so non-arc-1 scopes aren't filtered out of verified tokens. |
 | `xsuaa.requiredScopes` | `string[]` | — | Enforced via the SDK's `requireBearerAuth({ requiredScopes })`. |
-| `xsuaa.strictResource` | `boolean` | `false` | Require the exact `${appUrl}/mcp` URL in the verified XSUAA token's `aud` claim. Also bind OAuth state, codes and refresh envelopes to that resource. See [Resource audience isolation](#resource-audience-isolation). |
 | `xsuaa.redirectUriPatterns` | `readonly string[]` | `XSUAA_DEFAULT_REDIRECT_URI_PATTERNS` | Redirect allowlist for the pre-registered default client; also permits extra DCR custom schemes. See [Redirect validation](#redirect-validation). |
 | `xsuaa.dcrRedirectUriPatterns` | `readonly string[]` | unset | Optional allowlist for DCR redirect URIs. Registration rejects non-matching URIs; earlier client_ids keep only matching URIs. `[]` rejects every DCR redirect. See [Redirect validation](#redirect-validation). |
 | `xsuaa.defaultRedirectUris` | `readonly string[]` | `XSUAA_DEFAULT_REDIRECT_URIS` | Initial URIs for the default client; each must also match `redirectUriPatterns` at the callback. Narrow both lists together. |
@@ -228,20 +227,9 @@ The facade's configuration object. All fields are optional except where noted.
 
 ### Resource audience isolation
 
-By default, XSUAA tokens are validated against the XSUAA application binding. If two MCP resources share that binding and the same scopes, either resource can accept the other's token. Use separate XSUAA bindings or resource-specific scopes when the resources have different access policies.
+XSUAA tokens are validated against the XSUAA application binding, not against the URL of one MCP server. XSUAA accepts the OAuth `resource` parameter (RFC 8707) but does not put it into the token's `aud`, so this package cannot bind a token to a single MCP endpoint. If two MCP servers share one XSUAA service instance and the same scopes, each accepts tokens issued through the other.
 
-`xsuaa.strictResource: true` adds an exact resource check for the facade's `${appUrl}/mcp` URL. The verified token must contain that URL in its signed `aud` claim, in addition to passing SAP's normal application-binding validation. A missing or different resource returns `401 invalid_token` and cannot fall through to another verifier. The proxy requires the same `resource` on authorization, sends it on code and refresh exchanges, and binds local state, authorization codes and refresh envelopes to it. API keys and separately configured OIDC tokens remain independent authentication methods.
-
-```ts
-setupHttpAuth(app, {
-  xsuaa: { credentials, appUrl: 'https://mcp.example.com', strictResource: true },
-  required: true,
-});
-```
-
-For a custom MCP path, building-block users pass its canonical URL as `expectedResource` to both `createXsuaaOAuthProvider` and `createXsuaaTokenVerifier`. The provider requires the URL to share the public callback origin. Direct `XsuaaProxyOAuthProvider` callers must also supply a verifier that validates the audience and returns the same `AuthInfo.resource`; the constructor rejects an unbound verifier result. All instances serving one resource must use the same setting and signing secret. Enabling strict mode invalidates in-flight state, local authorization codes and existing refresh envelopes; clients must sign in again. Existing raw XSUAA access tokens without the resource audience are rejected until they expire.
-
-Confirm in a test tenant that XSUAA issues the resource URL in `aud` and accepts `resource` at authorization, code and refresh endpoints before enabling strict mode. This package cannot add a resource audience to an XSUAA token. If the tenant does not issue one, use distinct XSUAA bindings or a different authorization server that does. Do not infer isolation from the `resource` request parameter alone.
+When two servers need separate access boundaries, give each its own XSUAA service instance. Different scope names per server (`xsuaa.scopesSupported` with `xsuaa.requiredScopes`) are a weaker measure: they help only for tokens requested with an explicit scope list, because a token requested without one carries every scope the user holds in that application.
 
 ### Browser approval
 

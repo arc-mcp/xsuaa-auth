@@ -19,7 +19,6 @@ import { InvalidTokenError } from './internal/sdk.js';
 import { assertAuthInfo, isMalformedAuthInfoError } from './internal/verifier-result.js';
 import type { Logger } from './logger.js';
 import type { ApiKeyEntry, ExpandScopes, Verifier } from './types.js';
-import { resourceRejection } from './xsuaa-resource.js';
 import { principalRejection } from './xsuaa-user-principal.js';
 
 const IDENTITY: ExpandScopes = (s) => s;
@@ -369,11 +368,6 @@ export function createChainedTokenVerifier(
         if (denial) {
           logger.debug('Chained token verifier: principal rejected', { method, code: denial.code });
           throw denial;
-        }
-        const resourceDenial = resourceRejection(err);
-        if (resourceDenial) {
-          logger.debug('Chained token verifier: resource rejected', { method });
-          throw resourceDenial;
         }
         logger.debug(`Chained token verifier: ${method} failed, trying next`, () => diagnosticError(err));
         continue;

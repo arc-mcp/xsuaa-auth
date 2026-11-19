@@ -148,7 +148,7 @@ export function validateRedirectUri(uri: string, patterns?: readonly string[]): 
 export function matchesRedirectPattern(uri: string, patterns?: readonly string[]): boolean;
 
 // ─── OAuth-state codec (the #214 `+`-bug callback proxy) ───
-export interface OAuthStateCodecOptions { kdfLabel?: string /* 'mcp-oauth-state/v1' */; ttlSeconds?: number /* 600 */; resourceBinding?: string }
+export interface OAuthStateCodecOptions { kdfLabel?: string /* 'mcp-oauth-state/v1' */; ttlSeconds?: number /* 600 */ }
 export class OAuthStateCodec {
   constructor(signingSecret: string, options?: OAuthStateCodecOptions);
   encode(input: { clientState?: string; clientRedirectUri: string; clientId: string; now?: number }): string;
@@ -164,7 +164,6 @@ export interface CreateXsuaaOAuthProviderOptions {
   dcrTtlSeconds?: number; stateTtlSeconds?: number; dcrSigningSecret?: string;
   redirectUriPatterns?: readonly string[]; dcrRedirectUriPatterns?: readonly string[];
   defaultRedirectUris?: readonly string[]; callbackUrl?: string; logger?: Logger;
-  expectedResource?: string; // opt-in exact audience, same origin as appUrl
 }
 export function createXsuaaOAuthProvider(
   credentials: XsuaaCredentials, appUrl: string, options?: CreateXsuaaOAuthProviderOptions,
@@ -183,7 +182,6 @@ export function createXsuaaTokenVerifier(
 export interface XsuaaTokenVerifierOptions {
   expandScopes?: ExpandScopes; acceptedScopes?: string[]; logger?: Logger;
   userAttributeNames?: readonly string[]; requireUserToken?: boolean;
-  expectedResource?: string; // opt-in exact verified aud requirement
 }
 export type XsuaaUserAttributeStatus = 'valid' | 'missing' | 'invalid' | 'limit_exceeded';
 // Sparse, null-prototype records: absent keys are undefined; no instance Object methods.
@@ -200,7 +198,6 @@ export class XsuaaUserTokenRequiredError extends InsufficientScopeError {
   static errorCode: string; // 'forbidden', not a scope-escalation challenge
   readonly code: 'XSUAA_USER_TOKEN_REQUIRED';
 }
-export class XsuaaResourceMismatchError extends InvalidTokenError { readonly code: 'XSUAA_RESOURCE_MISMATCH' }
 export function createOidcVerifier(   // lazy-imports jose
   issuer: string, audience: string,
   options?: { clockToleranceSec?: number; scopeClaim?: string; algorithms?: string[]; acceptedScopes?: string[]; fallbackScopes?: string[]; expandScopes?: ExpandScopes; logger?: Logger },
@@ -227,7 +224,6 @@ export interface AuthOptions {
     credentials: XsuaaCredentials; appUrl: string;
     clientIdPrefix?: string; dcrKdfLabel?: string; stateKdfLabel?: string;
     resourceName?: string; scopesSupported?: string[]; requiredScopes?: string[];
-    strictResource?: boolean; // exact `${appUrl}/mcp` audience requirement for XSUAA tokens
     redirectUriPatterns?: readonly string[]; dcrRedirectUriPatterns?: readonly string[];
     defaultRedirectUris?: readonly string[];
     dcrTtlSeconds?: number; stateTtlSeconds?: number; dcrSigningSecret?: string;
@@ -244,7 +240,6 @@ export function setupHttpAuth(
 ```
 
 Notes:
-- **Resource isolation is opt-in:** `strictResource` passes `${appUrl}/mcp` to the XSUAA provider and verifier. It requires that URL in the signed token audience, forwards `resource` through authorize/code/refresh, and separates local state/code/refresh keys by resource. The legacy default remains application-audience validation for existing deployments; shared XSUAA bindings therefore need separate scopes/bindings unless strict mode is supported by the issuer. API keys and OIDC are independent methods.
 - **`requiredScopes`** is enforced by the facade via the SDK's `requireBearerAuth({ requiredScopes })`; building-block users enforce scopes themselves. (calmcp sets `requiredScopes: ['Viewer']`; LISA/arc-1 leave it unset.) The facade derives `issuerUrl`/`baseUrl`/`resourceServerUrl` from `xsuaa.appUrl` and mounts the standard `/authorize` `ensureRedirectUri` (pattern-gated) + `/oauth/callback` + `mcpAuthRouter`.
 - **`expandScopes`** is the injected policy seam (default identity), applied **exactly once** — by each sub-verifier (XSUAA/OIDC/api-key) to the scopes it extracts before returning `AuthInfo`. `createChainedTokenVerifier` does **NOT** re-apply it (re-application would double a non-idempotent expander); it only builds its internal api-key verifier with the same hook so the api-key path expands once too. arc-1 passes its `authz/policy` fn so AuthInfo carries expanded scopes exactly as today; calmcp/LISA omit it. The facade threads it into every verifier uniformly; building-block users pass it per verifier.
 - **`acceptedScopes`** (verifier option; default `DEFAULT_ACCEPTED_SCOPES` = the arc-1 set) is the scope-name allowlist applied to the token's claims. The facade threads `xsuaa.scopesSupported` (when set) into both the XSUAA and OIDC verifiers as `acceptedScopes`, so a consumer that advertises non-arc-1 scopes (calmcp: `scopesSupported:['Viewer']`) keeps them instead of having them filtered out.

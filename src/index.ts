@@ -54,7 +54,6 @@ export {
 } from './verifiers.js';
 export type { XsuaaCredentials, XsuaaTokenVerifierOptions } from './xsuaa.js';
 export { createXsuaaTokenVerifier, qualifyXsuaaScopes, RESERVED_OAUTH_SCOPES } from './xsuaa.js';
-export { XsuaaResourceMismatchError } from './xsuaa-resource.js';
 // ─── Verified XSUAA user attributes + principal rejection ───────────
 export type {
   XsuaaUserAttributeInfo,

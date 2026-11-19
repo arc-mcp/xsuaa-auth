@@ -22,7 +22,6 @@ import { assertAuthInfo } from './internal/verifier-result.js';
 import type { Logger } from './logger.js';
 import type { ExpandScopes, Verifier } from './types.js';
 import { DEFAULT_ACCEPTED_SCOPES } from './verifiers.js';
-import { hasResourceAudience, validateExpectedResource, XsuaaResourceMismatchError } from './xsuaa-resource.js';
 import { extractXsuaaUserAttributes, validateUserAttributeNames } from './xsuaa-user-attributes.js';
 import {
   hasSupportedXsuaaUserPrincipal,
@@ -54,8 +53,6 @@ export interface XsuaaTokenVerifierOptions {
   userAttributeNames?: readonly string[];
   /** Reject machine/unknown principals; the SDK bearer middleware maps the typed error to 403. */
   requireUserToken?: boolean;
-  /** Opt-in exact audience requirement for this MCP resource. Missing or mismatched aud is terminal. */
-  expectedResource?: string;
 }
 
 // ─── XSUAA Token Verifier ────────────────────────────────────────────
@@ -81,8 +78,6 @@ export function createXsuaaTokenVerifier(
   const expandScopes = options.expandScopes ?? ((s: string[]): string[] => s);
   const acceptedScopes = options.acceptedScopes ?? DEFAULT_ACCEPTED_SCOPES;
   const userAttributeNames = validateUserAttributeNames(options.userAttributeNames);
-  const expectedResource =
-    options.expectedResource === undefined ? undefined : validateExpectedResource(options.expectedResource);
   if (options.requireUserToken !== undefined && typeof options.requireUserToken !== 'boolean') {
     throw new TypeError('requireUserToken must be a boolean');
   }
@@ -110,15 +105,6 @@ export function createXsuaaTokenVerifier(
     } catch (err) {
       logger.debug('XSUAA token validation failed', () => diagnosticError(err));
       throw new InvalidTokenError('XSUAA token validation failed');
-    }
-
-    // SAP has validated the signature and application binding. Require the
-    // resource audience as an additional, exact claim when strict mode is on.
-    if (
-      expectedResource &&
-      !hasResourceAudience(securityContext.token.payload as Record<string, unknown>, expectedResource)
-    ) {
-      throw new XsuaaResourceMismatchError();
     }
 
     const userPrincipal =
@@ -153,7 +139,6 @@ export function createXsuaaTokenVerifier(
       token,
       clientId: securityContext.getClientId(),
       scopes: expandedScopes,
-      ...(expectedResource ? { resource: new URL(expectedResource) } : {}),
       expiresAt: typeof expiresAt === 'number' ? expiresAt : undefined,
       extra: {
         userName: securityContext.getLogonName?.() ?? undefined,

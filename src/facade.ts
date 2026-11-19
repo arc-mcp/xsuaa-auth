@@ -47,8 +47,6 @@ export interface AuthOptions {
     resourceName?: string;
     scopesSupported?: string[];
     requiredScopes?: string[];
-    /** Opt-in: require an exact resource URL in verified XSUAA token audiences. */
-    strictResource?: boolean;
     /** Default-client redirect allowlist; also permits extra DCR custom schemes. */
     redirectUriPatterns?: readonly string[];
     /** Optional DCR redirect allowlist; registrations and earlier client_ids are limited to matching URIs. */
@@ -116,12 +114,6 @@ export function setupHttpAuth(
     (typeof options.apiKeys === 'string' ? options.apiKeys.length > 0 : options.apiKeys.length > 0);
   const hasOidc = options.oidc !== undefined;
   const hasXsuaa = options.xsuaa !== undefined;
-  if (options.xsuaa?.strictResource !== undefined && typeof options.xsuaa.strictResource !== 'boolean') {
-    throw new TypeError('xsuaa.strictResource must be a boolean');
-  }
-  const expectedResource = options.xsuaa?.strictResource
-    ? new URL(`${options.xsuaa.appUrl.replace(/\/$/, '')}/mcp`).href
-    : undefined;
 
   // (e) No method configured → throw or warn+undefined.
   if (!hasApiKeys && !hasOidc && !hasXsuaa) {
@@ -144,7 +136,7 @@ export function setupHttpAuth(
   // we thread those through so they are not filtered out of XSUAA/OIDC tokens.
   const acceptedScopes = options.xsuaa?.scopesSupported;
   const xsuaaVerifier: Verifier | undefined = options.xsuaa
-    ? createXsuaaTokenVerifier(options.xsuaa.credentials, { expandScopes, acceptedScopes, expectedResource, logger })
+    ? createXsuaaTokenVerifier(options.xsuaa.credentials, { expandScopes, acceptedScopes, logger })
     : undefined;
   const oidcVerifier: Verifier | undefined = options.oidc
     ? createOidcVerifier(options.oidc.issuer, options.oidc.audience, {
@@ -186,7 +178,6 @@ export function setupHttpAuth(
       dcrRedirectUriPatterns: xsuaa.dcrRedirectUriPatterns,
       defaultRedirectUris: xsuaa.defaultRedirectUris,
       callbackUrl: xsuaa.callbackUrl,
-      expectedResource,
       logger,
     });
 

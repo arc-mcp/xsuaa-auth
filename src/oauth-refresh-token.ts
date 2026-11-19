@@ -13,15 +13,9 @@ const hash = (value: string) => createHash('sha256').update(value).digest('base6
 export class OAuthRefreshTokenCodec {
   private readonly key: Buffer;
 
-  constructor(secret: string, issuer: string, xsuaaClientId: string, callbackUrl: string, resourceBinding?: string) {
+  constructor(secret: string, issuer: string, xsuaaClientId: string, callbackUrl: string) {
     this.key = createHmac('sha256', secret)
-      .update(
-        JSON.stringify(
-          resourceBinding === undefined
-            ? ['mcp-oauth-refresh/v1', issuer, xsuaaClientId, callbackUrl]
-            : ['mcp-oauth-refresh/v2', issuer, xsuaaClientId, callbackUrl, resourceBinding],
-        ),
-      )
+      .update(JSON.stringify(['mcp-oauth-refresh/v1', issuer, xsuaaClientId, callbackUrl]))
       .digest();
   }
 
