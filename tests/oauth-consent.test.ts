@@ -215,6 +215,7 @@ describe('OAuth proxy client consent', () => {
     const target = new URL(callback.headers.location);
     expect(target.searchParams.get('state')).toBe(flow.params.state);
     expect(target.searchParams.get('code')).toMatch(/^mcp-code-/);
+    expect(target.searchParams.get('iss')).toBe(new URL(appUrl).href);
     expect(callback.headers['set-cookie']).toEqual(
       expect.arrayContaining([expect.stringContaining('Expires=Thu, 01 Jan 1970')]),
     );
@@ -407,7 +408,23 @@ describe('OAuth proxy client consent', () => {
     const denied = await approve(app, flow, { consent_action: 'deny' });
     expect(denied.status).toBe(303);
     expect(new URL(denied.headers.location).searchParams.get('error')).toBe('access_denied');
+    expect(new URL(denied.headers.location).searchParams.get('iss')).toBe(new URL(appUrl).href);
     expect(responseCookies(denied)).toEqual([]);
+  });
+
+  it('names the issuer on an identity-provider error redirect, as the metadata promises (RFC 9207)', async () => {
+    const { app } = buildApp();
+    const metadata = await request(app).get('/.well-known/oauth-authorization-server');
+    expect(metadata.body.authorization_response_iss_parameter_supported).toBe(true);
+    const approved = await approve(app, await begin(app, 'https://claude.ai/api/mcp/auth_callback'));
+    const callback = await request(app)
+      .get('/oauth/callback')
+      .set('Cookie', responseCookies(approved))
+      .query({ state: new URL(approved.headers.location).searchParams.get('state'), error: 'invalid_scope' });
+    expect(callback.status).toBe(302);
+    const target = new URL(callback.headers.location);
+    expect(target.searchParams.get('error')).toBe('invalid_scope');
+    expect(target.searchParams.get('iss')).toBe(metadata.body.issuer);
   });
 
   it('escapes untrusted names and protects the consent page without breaking popups', async () => {

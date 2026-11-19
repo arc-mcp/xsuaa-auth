@@ -1,6 +1,6 @@
 # @arc-mcp/xsuaa-auth
 
-**XSUAA / OAuth authentication + SAP BTP principal propagation for [Model Context Protocol](https://modelcontextprotocol.io) servers** built on Express and [`@modelcontextprotocol/sdk`](https://github.com/modelcontextprotocol/typescript-sdk).
+**XSUAA / OAuth authentication + SAP BTP principal propagation for [Model Context Protocol](https://modelcontextprotocol.io) servers** built on Express. Works with the [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk) v1 (`@modelcontextprotocol/sdk`) and v2 (`@modelcontextprotocol/server`).
 
 [![CI](https://github.com/arc-mcp/xsuaa-auth/actions/workflows/ci.yml/badge.svg)](https://github.com/arc-mcp/xsuaa-auth/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/arc-mcp/xsuaa-auth/actions/workflows/codeql.yml/badge.svg)](https://github.com/arc-mcp/xsuaa-auth/actions/workflows/codeql.yml)
@@ -21,18 +21,19 @@ Two API layers, same package: a **plug-and-play facade** for the common flow, an
 npm install @arc-mcp/xsuaa-auth
 ```
 
-ESM-only, Node **>= 22**. You also need these **peer dependencies** (the package shares the host's Express + MCP SDK instances rather than bundling its own):
+ESM-only, Node **>= 22**. You also need these **peer dependencies**:
 
 | Peer | Range | Required? |
 |------|-------|-----------|
-| [`@modelcontextprotocol/sdk`](https://www.npmjs.com/package/@modelcontextprotocol/sdk) | `>=1.18.2 <2` | **yes** — `1.18.2` is the first version exposing `mcpAuthRouter({ resourceServerUrl })` |
-| [`express`](https://www.npmjs.com/package/express) | `^5.0.1` | **yes** — the SDK hard-depends on Express 5; v4 cannot coexist with its router |
+| [`express`](https://www.npmjs.com/package/express) | `^5.0.1` | **yes** — the package mounts its routes and middleware on your app |
 | [`jose`](https://www.npmjs.com/package/jose) | `>=5 <7` | **optional** — only for the OIDC verifier; lazy-imported, so non-OIDC consumers can skip it |
 
 ```bash
-npm install @modelcontextprotocol/sdk express
+npm install express
 npm install jose            # only if you use createOidcVerifier / AuthOptions.oidc
 ```
+
+**No MCP SDK peer.** The OAuth router, bearer middleware and error classes come from [`@modelcontextprotocol/server-legacy`](https://www.npmjs.com/package/@modelcontextprotocol/server-legacy) (the frozen copy of the SDK v1 auth code, which SDK v2 no longer ships in its server package). It is a regular dependency, pinned to an exact version because the OAuth wire behaviour comes from it, so the package runs next to SDK v1, SDK v2, or neither. npm prints a deprecation notice for it on install; that is expected. The SDK plans to remove that package in v3; this package will then carry the code itself, without a change for consumers.
 
 `@sap/xssec` and `@sap-cloud-sdk/connectivity` are regular dependencies and install automatically.
 
@@ -96,9 +97,9 @@ import {
   StatelessDcrClientStore,
   OAuthStateCodec,
   validateRedirectUri,
+  mcpAuthRouter,
+  requireBearerAuth,
 } from '@arc-mcp/xsuaa-auth';
-import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
-import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 
 // 1. The XSUAA OAuth provider also hands you the DCR store + state codec.
 const { provider, clientStore, stateCodec } = createXsuaaOAuthProvider(credentials, appUrl, {
@@ -122,6 +123,31 @@ app.get('/oauth/callback', createOAuthCallbackHandler(stateCodec, clientStore, {
 app.use(mcpAuthRouter({ provider, issuerUrl, baseUrl, resourceServerUrl, scopesSupported, resourceName }));
 app.all('/mcp', requireBearerAuth({ verifier: { verifyAccessToken: verifier }, resourceMetadataUrl }), myMcpHandler);
 ```
+
+> **Take `mcpAuthRouter`, `requireBearerAuth` and the OAuth error classes from this package, not from an MCP SDK.** The middleware maps errors by class identity. A router or bearer middleware from another SDK copy does not recognise this package's errors and answers `500` where `401` or `400` is due. A verifier passed straight to `requireBearerAuth` should throw the `InvalidTokenError` (401) / `InsufficientScopeError` (403) exported here. Inside `createChainedTokenVerifier` an ordinary scope error from one method lets the next one try, and exhaustion answers 401.
+
+**Mounting on an SDK v2 server.** This follows the SDK's [Express recipe](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/serving/express.md). `requireBearerAuth` sets `req.auth`; `toNodeHandler` from `@modelcontextprotocol/node` forwards it to handlers as `ctx.http.authInfo`. Pass the parsed body explicitly, because Express hands `next` as the third argument and the adapter ignores it:
+
+```ts
+import { createMcpExpressApp } from '@modelcontextprotocol/express';
+import { toNodeHandler } from '@modelcontextprotocol/node';
+import { createMcpHandler } from '@modelcontextprotocol/server';
+
+// express() with express.json() and Host/Origin validation (hostnames, port-agnostic).
+const app = createMcpExpressApp({
+  host: '0.0.0.0',
+  allowedHosts: ['mcp.example.com'],
+  allowedOrigins: ['mcp.example.com', 'claude.ai'], // own consent form + browser clients
+});
+const bearer = setupHttpAuth(app, options);
+if (!bearer) throw new Error('no auth method configured'); // undefined only when none is set
+const mcp = toNodeHandler(createMcpHandler(() => buildServer())); // serves 2026-07-28 and 2025-era clients
+app.all('/mcp', bearer, (req, res) => mcp(req, res, req.body));
+```
+
+The MCP transport requires the host to reject requests with an unexpected `Origin`, and `createMcpHandler` leaves that to you. This package's `allowedOrigins` only adds CORS headers; it does not reject anything. Use `createMcpExpressApp` (or the `Host`/`Origin` guards from `@modelcontextprotocol/node`) for validation. On a non-localhost bind it checks `Origin` only when `allowedOrigins` is given.
+
+**Include the app's own public hostname** in `createMcpExpressApp.allowedOrigins`. The `/authorize` approval form posts from that origin, so omitting it returns 403 after the approval page loads. List any other browser client's origin in both places: as a hostname in `createMcpExpressApp.allowedOrigins`, and as a full origin in this package's `allowedOrigins` for CORS.
 
 Each verifier accepts an optional injected **`expandScopes`** policy hook (default identity), applied **exactly once** by the sub-verifier that produces the `AuthInfo`. `createChainedTokenVerifier` does **not** re-apply it on top of a sub-verifier's result (so a non-idempotent expander runs once, not twice) — it only uses the hook for the api-key verifier it builds from `config.apiKeys`. arc-1 passes its `authz/policy` function so `AuthInfo` carries expanded scopes; other consumers omit it. The package owns **no** scope/tool policy — it's injected, never owned.
 
@@ -151,7 +177,7 @@ status codes. Target syntax and application policy stay in the consumer. Do not 
 scope named `user_attributes` to activate this feature.
 
 `requireUserToken` rejects machine or unknown principals with the exported
-`XsuaaUserTokenRequiredError`. It extends the MCP SDK's `InsufficientScopeError`, so
+`XsuaaUserTokenRequiredError`. It extends the `InsufficientScopeError` exported by this package, so
 `requireBearerAuth` returns **403** with this package's `forbidden` wire code, not an
 `insufficient_scope` step-up challenge; ordinary `InvalidTokenError` remains
 **401**. A custom adapter can instead map its stable `XSUAA_USER_TOKEN_REQUIRED` code to a generic
@@ -195,11 +221,17 @@ The facade's configuration object. All fields are optional except where noted.
 | `xsuaa.dcrSigningSecret` | `string` | XSUAA `clientsecret` | Dedicated HMAC secret for DCR `client_id`s — set a ≥32-byte value so a `clientsecret` rotation doesn't invalidate cached client_ids. |
 | `xsuaa.callbackUrl` | `string` | `${appUrl}/oauth/callback` | This server's callback URL sent to XSUAA. Must share the configured `appUrl` origin; HTTPS required except HTTP loopback development. Allow it in `xs-security.json` `redirect-uris`; it need not match the client patterns. |
 | `oidc` | `object` | — | `{ issuer, audience, clockToleranceSec?, algorithms?, scopeClaim?, acceptedScopes?, fallbackScopes? }`. Lazy-imports `jose`. `algorithms` defaults to `['RS256','ES256','PS256']`; `scopeClaim` overrides the primary scope-claim name (default `scope`); `acceptedScopes` is the scope-name allowlist for **OIDC-only** deployments with custom scope names (defaults to `xsuaa.scopesSupported`, else the arc-1 set); `fallbackScopes` (default `[]`, fail closed) is the scope set granted when a verified token carries no accepted scope — set `['read']` for legacy read-only fallback. |
-| `allowedOrigins` | `string[]` | — | Exact-match CORS allowlist (with `credentials`) for browser MCP clients. Unset = no CORS. |
+| `allowedOrigins` | `string[]` | — | Exact-match CORS allowlist (with `credentials`) for browser MCP clients. A preflight from a listed origin is granted the request headers it asks for; `WWW-Authenticate` is exposed. Unset = no CORS. |
 | `required` | `boolean` | `false` | `true` ⇒ throw if no method configured; `false` ⇒ warn + return `undefined` (open). |
 | `expandScopes` | `(scopes: string[]) => string[]` | identity | Injected scope-expansion policy, applied by every verifier. |
 
 `setupHttpAuth(app, options, logger?)` returns the `/mcp` bearer `RequestHandler`, or `undefined` when no method is configured and `required` is falsy.
+
+### Resource audience isolation
+
+XSUAA tokens are validated against the XSUAA application binding, not against the URL of one MCP server. XSUAA accepts the OAuth `resource` parameter (RFC 8707) but does not put it into the token's `aud`, so this package cannot bind a token to a single MCP endpoint. If two MCP servers share one XSUAA service instance and the same scopes, each accepts tokens issued through the other.
+
+When two servers need separate access boundaries, give each its own XSUAA service instance. Different scope names per server (`xsuaa.scopesSupported` with `xsuaa.requiredScopes`) are a weaker measure: they help only for tokens requested with an explicit scope list, because a token requested without one carries every scope the user holds in that application.
 
 ### Browser approval
 
@@ -247,6 +279,10 @@ client and return address before token exchange; XSUAA continues to enforce PKCE
 single use. Concurrent tabs and multiple instances work without a shared session store
 when their public URL and signing secret agree. Reverse proxies must preserve Cookie
 and Origin headers and advertise the correct public `appUrl`, including its path prefix.
+With a path prefix, RFC 9728 places the protected-resource document at the origin root
+(`/.well-known/oauth-protected-resource/<prefix>/mcp`), so the proxy must route that path
+to this server as well. Authorization-server metadata is served at
+`/.well-known/oauth-authorization-server` only, not at the path-specific location.
 
 Existing client IDs remain valid. Sign-ins in flight during the upgrade must restart:
 legacy unbound state and raw upstream authorization codes are rejected.
@@ -284,6 +320,28 @@ Revoking a local refresh envelope unwraps it for its issuing client, regardless
 of `token_type_hint`. Invalid local envelopes are a successful no-op. Existing
 raw access-token and legacy upstream-token revocation remains supported; raw-token
 revocation does not establish a local client binding.
+
+### Upgrading from 1.x to 2.0
+
+2.0 removes the `@modelcontextprotocol/sdk` peer dependency. `setupHttpAuth` users change nothing. If you mount the SDK's router, bearer middleware or `metadataHandler` yourself, or import its OAuth error classes, switch those imports to this package:
+
+```diff
+-import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
+-import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
+-import { InvalidTokenError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
++import { InvalidTokenError, mcpAuthRouter, requireBearerAuth } from '@arc-mcp/xsuaa-auth';
+```
+
+The package exports `mcpAuthRouter`, `requireBearerAuth`, `metadataHandler`, the `OAuthError` base class and the four errors it throws: `InvalidTokenError`, `InsufficientScopeError`, `InvalidGrantError` and `InvalidClientMetadataError`. Other SDK error classes are not exported.
+
+Skipping this step fails neither the build nor a happy-path test: invalid tokens and rejected registrations then answer `500` instead of `401` / `400`. Send a wrong token and a disallowed registration through your mounted app to check.
+
+Client ids keep working, and so do refresh tokens issued by 1.2.1, so no client has to re-register. (A refresh token from 1.2.0 or older already required a fresh sign-in on 1.2.1.) Three responses differ on the wire:
+
+- Authorization-server metadata now states `authorization_response_iss_parameter_supported: true`, and every redirect back to the client (the code, a denied approval, an identity-provider error) carries `iss`, equal to the metadata `issuer` ([RFC 9207](https://www.rfc-editor.org/rfc/rfc9207.html), which the 2026-07-28 MCP specification asks for). A client that checks it rejects a response without it, so upgrade every instance before resuming sign-ins.
+- `POST /register` checks `application_type`: a non-string value answers `400 invalid_client_metadata` (1.x ignored the field) and a string value is echoed in the response.
+
+If you serve your own `/oauth/callback` route instead of `createOAuthCallbackHandler`, mount that handler: it wraps the authorization code the provider exchanges (since 1.1.1) and appends `iss`.
 
 ### Upgrading deployments
 

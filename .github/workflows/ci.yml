@@ -57,30 +57,15 @@ jobs:
         run: npm run check:exports
 
   # Peer compatibility matrix (SPEC §4): run the full test suite against the
-  # supported @modelcontextprotocol/sdk × express combinations so a peer bump in
-  # a consumer can't silently break us. The build job above covers Node 22/24 at
-  # the in-range dev versions; this job fixes Node 22 and varies the peers.
-  #   1.18.2 + 5.0.1  → floor (first SDK with mcpAuthRouter resourceServerUrl)
-  #   1.25.3 + 5.0.1  → last SDK before it hard-bumped express to ^5.2.1
-  #   1.28.x + 5.2.1  → older supported SDK
-  #   1.29.x + 5.2.1  → older supported SDK
-  #   1.32.1 + 5.2.1 → current SDK
+  # Express floor and the current line so a peer bump in a consumer can't
+  # silently break us. The MCP SDK is no longer a peer; tests/sdk-consumers.test.ts
+  # covers an SDK v1 and an SDK v2 server at the dev versions.
   peer-matrix:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - sdk: '1.18.2'
-            express: '5.0.1'
-          - sdk: '1.25.3'
-            express: '5.0.1'
-          - sdk: '1.28'
-            express: '5.2.1'
-          - sdk: '1.29'
-            express: '5.2.1'
-          - sdk: '1.32.1'
-            express: '5.2.1'
+        express: ['5.0.1', '5.2.1']
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
@@ -93,39 +78,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Pin peers (@modelcontextprotocol/sdk@${{ matrix.sdk }} + express@${{ matrix.express }})
-        run: npm install --no-save --no-audit --no-fund "@modelcontextprotocol/sdk@${{ matrix.sdk }}" "express@${{ matrix.express }}"
+      - name: Pin peer (express@${{ matrix.express }})
+        run: npm install --no-save --no-audit --no-fund "express@${{ matrix.express }}"
 
       - name: Type check
         run: npm run typecheck
 
       - name: Run tests
         run: npm test
-
-  # Peer-floor regression guard: pin the *lowest supported* peer versions
-  # (@modelcontextprotocol/sdk 1.18.2 — first version exposing
-  # mcpAuthRouter({ resourceServerUrl }) — and express 5.0.1) and typecheck.
-  # Excess-property / API-shape errors against the floor surface only here;
-  # the build matrix runs against the in-range dev versions (SDK 1.32 / express 5.2).
-  peer-floor:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-
-      - name: Setup Node.js
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
-        with:
-          node-version: 22
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      # Override the peer/dev versions with the declared floor, without touching
-      # package.json. --no-save keeps the lockfile clean; the resolved versions
-      # are what `tsc` then type-checks against.
-      - name: Pin peer floor (@modelcontextprotocol/sdk@1.18.2 + express@5.0.1)
-        run: npm install --no-save --no-audit --no-fund @modelcontextprotocol/sdk@1.18.2 express@5.0.1
-
-      - name: Type check against peer floor
-        run: npm run typecheck

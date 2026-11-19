@@ -169,6 +169,9 @@ export function createOAuthCallbackHandler(
       return;
     }
 
+    // RFC 9207: every authorization response (code or error) names this server as issuer.
+    if (decoded.issuer) target.searchParams.set('iss', decoded.issuer);
+
     // On error there is no auth code. Forward the error to the client per the
     // OAuth spec — EXCEPT for loopback HTTP callbacks. Native MCP clients tear
     // down their ephemeral localhost listener the instant the flow fails, so a

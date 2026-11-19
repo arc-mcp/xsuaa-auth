@@ -55,6 +55,15 @@ The temporary `GHSA-86w9-cpqp-85rv` risk acceptance has been removed.
 All production and development dependencies remain audited; high/critical findings and audit
 failures block CI and publishing through [audit-ci.json](./audit-ci.json).
 
+Until **15 December 2026, 00:00 Europe/Berlin**, CI and publishing accept only
+[GHSA-fc5q-39xc-vjpf](https://github.com/advisories/GHSA-fc5q-39xc-vjpf), a ReDoS advisory that
+covers every `picomatch` release through 4.0.7 and has no patched version as of 18 November 2026.
+`picomatch` is reachable only through development tooling (`lint-staged`, `vitest`, `vite`); it is
+not in the production dependency graph or the published package, and its glob patterns come from
+this repository's own configuration. [audit-ci.json](./audit-ci.json) enforces the expiry. Remove
+the exception as soon as a fixed release is available; any extension requires a new maintainer
+decision. Other high and critical advisories still fail.
+
 Consuming applications maintain their own lockfiles. Refresh their transitive `node-forge`
 resolution to 1.4.3 or later; updating this repository's lockfile does not rewrite downstream locks.
 Concrete exposure through this package remains reportable.
@@ -82,6 +91,7 @@ The package ships fail-closed defaults, but a few knobs are load-bearing for sec
 - **`createOidcVerifier({ algorithms })`** defaults to `['RS256','ES256','PS256']` — an explicit allowlist that closes `alg:none` and algorithm-confusion. Do not widen it to include symmetric algorithms.
 - **`createOidcVerifier({ fallbackScopes })`** defaults to `[]` (**fail closed**). When a verified OIDC token carries no accepted scope — no `scope`/`scp` claim, or claims that match none of `acceptedScopes` — the verifier grants `fallbackScopes`. The empty default means an IdP misconfigured to drop scope claims grants **no** privileges instead of silently falling back to read-only access. Only set `fallbackScopes: ['read']` (or wider) if you deliberately want an unscoped-but-authenticated token to receive a baseline grant.
 - **`required: true`** on `setupHttpAuth` fails closed when no auth method is configured; leaving it `false` (the default) logs a loud warning and serves `/mcp` open.
+- **Resource audiences:** the XSUAA verifier checks the application binding. XSUAA does not put a requested `resource` URL into the token audience, so MCP servers that share an XSUAA service instance and scopes accept each other's tokens. For separate access boundaries use separate service instances; distinct scope names alone are a weaker measure. See [Resource audience isolation](./README.md#resource-audience-isolation).
 
 ## Principal-propagation destination cache isolation
 

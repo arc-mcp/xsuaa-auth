@@ -15,7 +15,8 @@ import type { Express } from 'express';
 
 const ALLOW_METHODS = 'GET,POST,DELETE,OPTIONS';
 const ALLOW_HEADERS = 'Content-Type, Authorization, mcp-session-id';
-const EXPOSE_HEADERS = 'mcp-session-id';
+// `WWW-Authenticate` is not CORS-safelisted; a browser client needs it to read the challenge.
+const EXPOSE_HEADERS = 'mcp-session-id, WWW-Authenticate';
 
 /**
  * Apply an exact-match CORS handler to `app`. When a request's `Origin` is in
@@ -35,10 +36,13 @@ export function applyCors(app: Express, allowedOrigins: readonly string[]): void
       res.setHeader('Access-Control-Allow-Origin', origin);
       res.setHeader('Access-Control-Allow-Credentials', 'true');
       res.setHeader('Access-Control-Allow-Methods', ALLOW_METHODS);
-      res.setHeader('Access-Control-Allow-Headers', ALLOW_HEADERS);
+      // A preflight gets the headers it asked for: the origin is already allowlisted, and
+      // SDK v2 clients send `Mcp-Method`, `Mcp-Name` and per-tool `Mcp-Param-*` headers
+      // that a fixed list cannot name.
+      res.setHeader('Access-Control-Allow-Headers', req.headers['access-control-request-headers'] ?? ALLOW_HEADERS);
       res.setHeader('Access-Control-Expose-Headers', EXPOSE_HEADERS);
-      // `Vary: Origin` so caches don't serve one origin's CORS headers to another.
-      res.setHeader('Vary', 'Origin');
+      // `Vary` so caches don't serve one origin's (or one preflight's) CORS headers to another.
+      res.vary('Origin, Access-Control-Request-Headers');
 
       if (req.method === 'OPTIONS') {
         res.status(204).end();

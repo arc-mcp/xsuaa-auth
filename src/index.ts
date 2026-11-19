@@ -16,8 +16,18 @@ export { StatelessDcrClientStore } from './dcr-client-store.js';
 export type { AuthOptions } from './facade.js';
 // ─── Facade ──────────────────────────────────────────────────────────
 export { setupHttpAuth } from './facade.js';
-// ─── Re-exported SDK types (behind the §8 insulation layer) ──────────
+// ─── SDK auth surface (behind the §8 insulation layer) ───────────────
 export type { AuthInfo, OAuthClientInformationFull } from './internal/sdk.js';
+export {
+  InsufficientScopeError,
+  InvalidClientMetadataError,
+  InvalidGrantError,
+  InvalidTokenError,
+  mcpAuthRouter,
+  metadataHandler,
+  OAuthError,
+  requireBearerAuth,
+} from './internal/sdk.js';
 // ─── Logger contract ─────────────────────────────────────────────────
 export type { Logger } from './logger.js';
 export { noopLogger } from './logger.js';

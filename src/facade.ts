@@ -22,7 +22,7 @@
 import { type Express, type RequestHandler, urlencoded } from 'express';
 import { createOAuthCallbackHandler } from './callback.js';
 import { applyCors } from './cors.js';
-import { mcpAuthRouter, requireBearerAuth } from './internal/sdk.js';
+import { getOAuthProtectedResourceMetadataUrl, mcpAuthRouter, requireBearerAuth } from './internal/sdk.js';
 import type { Logger } from './logger.js';
 import { noopLogger } from './logger.js';
 import { createXsuaaOAuthProvider } from './oauth-provider.js';
@@ -163,7 +163,8 @@ export function setupHttpAuth(
     const issuerUrl = new URL(appUrl);
     const baseUrl = new URL(appUrl);
     const resourceServerUrl = new URL(`${appUrl.replace(/\/$/, '')}/mcp`);
-    const resourceMetadataUrl = `${appUrl.replace(/\/$/, '')}/.well-known/oauth-protected-resource/mcp`;
+    // The SDK helper yields the path the router mounts, also when `appUrl` has a path.
+    const resourceMetadataUrl = getOAuthProtectedResourceMetadataUrl(resourceServerUrl);
 
     const { provider, clientStore, stateCodec } = createXsuaaOAuthProvider(xsuaa.credentials, appUrl, {
       clientIdPrefix: xsuaa.clientIdPrefix,
