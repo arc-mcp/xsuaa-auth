@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.0.0-beta](https://github.com/arc-mcp/xsuaa-auth/compare/v1.2.2...v2.0.0-beta) (2026-11-19)
+
+
+### ⚠ BREAKING CHANGES
+
+* the @modelcontextprotocol/sdk peer dependency is removed. Consumers that mount mcpAuthRouter / requireBearerAuth themselves, or import the SDK's OAuth error classes, must import them from @arc-mcp/xsuaa-auth; an SDK's own copies do not recognise this package's errors and answer 500 where 401 or 400 is due. setupHttpAuth users need no change.
+
+### Features
+
+* run beside MCP SDK v1 or v2 without an SDK peer dependency ([#117](https://github.com/arc-mcp/xsuaa-auth/issues/117)) ([f0a0694](https://github.com/arc-mcp/xsuaa-auth/commit/f0a06949bac60cddbf381e34e8b5870bbbeb0cab)), closes [#116](https://github.com/arc-mcp/xsuaa-auth/issues/116)
+
 ## [1.2.2](https://github.com/arc-mcp/xsuaa-auth/compare/v1.2.1...v1.2.2) (2026-11-16)
 
 
