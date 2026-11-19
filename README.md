@@ -137,7 +137,7 @@ import { createMcpHandler } from '@modelcontextprotocol/server';
 const app = createMcpExpressApp({
   host: '0.0.0.0',
   allowedHosts: ['mcp.example.com'],
-  allowedOrigins: ['claude.ai'], // browser clients; requests without an Origin header always pass
+  allowedOrigins: ['mcp.example.com', 'claude.ai'], // own consent form + browser clients
 });
 const bearer = setupHttpAuth(app, options);
 if (!bearer) throw new Error('no auth method configured'); // undefined only when none is set
@@ -145,7 +145,9 @@ const mcp = toNodeHandler(createMcpHandler(() => buildServer())); // serves 2026
 app.all('/mcp', bearer, (req, res) => mcp(req, res, req.body));
 ```
 
-The MCP transport requires the host to reject requests with an unexpected `Origin`, and `createMcpHandler` leaves that to you. This package's `allowedOrigins` only adds CORS headers; it does not reject anything. Use `createMcpExpressApp` (or the `Host`/`Origin` guards from `@modelcontextprotocol/node`) for the validation. On a non-localhost bind it checks `Origin` only when `allowedOrigins` is given. List a browser client's origin in both places: as a hostname there, as a full origin here.
+The MCP transport requires the host to reject requests with an unexpected `Origin`, and `createMcpHandler` leaves that to you. This package's `allowedOrigins` only adds CORS headers; it does not reject anything. Use `createMcpExpressApp` (or the `Host`/`Origin` guards from `@modelcontextprotocol/node`) for validation. On a non-localhost bind it checks `Origin` only when `allowedOrigins` is given.
+
+**Include the app's own public hostname** in `createMcpExpressApp.allowedOrigins`. The `/authorize` approval form posts from that origin, so omitting it returns 403 after the approval page loads. List any other browser client's origin in both places: as a hostname in `createMcpExpressApp.allowedOrigins`, and as a full origin in this package's `allowedOrigins` for CORS.
 
 Each verifier accepts an optional injected **`expandScopes`** policy hook (default identity), applied **exactly once** by the sub-verifier that produces the `AuthInfo`. `createChainedTokenVerifier` does **not** re-apply it on top of a sub-verifier's result (so a non-idempotent expander runs once, not twice) — it only uses the hook for the api-key verifier it builds from `config.apiKeys`. arc-1 passes its `authz/policy` function so `AuthInfo` carries expanded scopes; other consumers omit it. The package owns **no** scope/tool policy — it's injected, never owned.
 
