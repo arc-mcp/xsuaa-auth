@@ -353,7 +353,10 @@ function hasDotSegments(raw: string): boolean {
 
 /** Strip the root label so `foo.localhost.` is treated as `foo.localhost`. */
 function normalizeHost(hostname: string): string {
-  return hostname.replace(/\.+$/, '').toLowerCase();
+  // No regex: `/\.+$/` backtracks quadratically on a long run of dots.
+  let end = hostname.length;
+  while (end > 0 && hostname[end - 1] === '.') end--;
+  return hostname.slice(0, end).toLowerCase();
 }
 
 /**
