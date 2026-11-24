@@ -134,6 +134,11 @@ export class XsuaaProxyOAuthProvider extends ProxyOAuthServerProvider {
    */
   override authorizationResponseIssParameterSupported = true;
 
+  /** True when URL client_ids resolve; `mcpAuthRouter` advertises the capability from this. */
+  get clientIdMetadataDocumentSupported(): boolean {
+    return this._localClientStore.cimdEnabled;
+  }
+
   /**
    * Override clientsStore to expose registerClient for DCR.
    * The MCP SDK checks this to decide whether to advertise

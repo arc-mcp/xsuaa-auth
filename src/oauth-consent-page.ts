@@ -2,6 +2,8 @@
 interface ConsentPageOptions {
   authorizationUrl: string;
   clientName?: string;
+  /** Host a Client ID Metadata Document was fetched from; the one verified fact about such a client. */
+  clientIdHost?: string;
   redirectUri: string;
   scopes?: readonly string[];
   expiresInSeconds: number;
@@ -87,6 +89,7 @@ export function renderConsentPage(options: ConsentPageOptions): string {
 <h2 id="application-heading">Application name (unverified)</h2>
 <p class="client-name"><bdi>${escapeHtml(clientName)}</bdi></p>
 ${shortName ? '<p class="hint">Name shortened for display.</p>' : ''}
+${options.clientIdHost ? `<p class="hint">Client metadata hosted at <span dir="ltr">${escapeHtml(options.clientIdHost)}</span></p>` : ''}
 </section>
 <section aria-labelledby="permissions-heading"><h2 id="permissions-heading">Requested permissions</h2>${permissions}</section>
 <section aria-labelledby="return-heading"><h2 id="return-heading">Return address</h2>

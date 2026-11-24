@@ -28,14 +28,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const mockLookup = vi.hoisted(() => vi.fn());
 vi.mock('node:dns', () => ({ lookup: mockLookup }));
 
-const {
-  fetchClientIdMetadataDocument,
-  hostAllowed,
-  isBlockedAddress,
-  performPinnedRequest,
-  proxyFromEnvironment,
-  validateClientIdUrl,
-} = await import('../src/cimd-fetch.js');
+const { fetchClientIdMetadataDocument, hostAllowed, isBlockedAddress, performPinnedRequest, validateClientIdUrl } =
+  await import('../src/cimd-fetch.js');
 
 type LookupEntry = { address: string; family: number };
 type LookupCallback = (err: NodeJS.ErrnoException | null, addresses?: LookupEntry[]) => void;
@@ -108,6 +102,10 @@ describe('isBlockedAddress — RFC 6890 special-use ranges', () => {
     for (const ip of blocked) expect(isBlockedAddress(ip), ip).toBe(true);
   });
 
+  it('blocks site-local and local-use NAT64 IPv6', () => {
+    for (const address of ['fec0::1', '64:ff9b:1::a00:1']) expect(isBlockedAddress(address), address).toBe(true);
+  });
+
   it('allows ordinary public IPv6', () => {
     for (const ip of ['2606:4700:4700::1111', '2a00:1450:4001:80e::200e', '2001:4860:4860::8888']) {
       expect(isBlockedAddress(ip), ip).toBe(false);
@@ -145,6 +143,12 @@ describe('validateClientIdUrl — Client Identifier URL shape', () => {
   it('accepts a well-formed https URL with a path', () => {
     const result = validateClientIdUrl('https://client.example.com/mcp/metadata.json');
     expect(result.ok).toBe(true);
+  });
+
+  it('refuses a client_id URL longer than 2048 characters', () => {
+    const result = validateClientIdUrl(`https://client.example.com/${'a'.repeat(2048)}`);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('shape');
   });
 
   it('refuses non-https schemes, including plain http', () => {
@@ -536,188 +540,5 @@ describe('performPinnedRequest — the pin itself', () => {
     // A pooled keep-alive socket would outlive the validation that authorised it.
     expect(captured?.agent).toBe(false);
     await pending;
-  });
-});
-
-// ─── Forward-proxy tunnelling (option C) ──────────────────────────────
-
-const proxies: Server[] = [];
-
-afterEach(async () => {
-  await Promise.all(proxies.splice(0).map((p) => new Promise<void>((r) => p.close(() => r()))));
-});
-
-type ProxyBehavior = 'accept' | 'deny' | 'accept-then-inject' | 'silent';
-
-/**
- * A fake forward proxy. Records the CONNECT head it was sent so the tests can assert what
- * the proxy was actually asked to reach — which is the whole security property of option C.
- */
-async function startFakeProxy(behavior: ProxyBehavior = 'accept'): Promise<{ url: string; heads: string[] }> {
-  const heads: string[] = [];
-  const proxy = (await import('node:net')).createServer((socket) => {
-    socket.once('data', (chunk: Buffer) => {
-      heads.push(chunk.toString('utf8'));
-      if (behavior === 'silent') return;
-      if (behavior === 'deny') {
-        socket.write('HTTP/1.1 407 Proxy Authentication Required\r\n\r\n');
-        socket.end();
-        return;
-      }
-      socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
-      if (behavior === 'accept-then-inject') {
-        socket.write('surprise');
-        return;
-      }
-      // The tunnel is granted but nothing behind it speaks TLS. Reset shortly after the
-      // 200 is flushed so the handshake fails fast and deterministically, instead of
-      // every accept-mode test sitting on the connect deadline.
-      setTimeout(() => socket.destroy(), 10);
-    });
-    socket.on('error', () => {});
-  });
-  proxies.push(proxy);
-  await new Promise<void>((r) => proxy.listen(0, '127.0.0.1', () => r()));
-  const port = (proxy.address() as AddressInfo).port;
-  return { url: `http://127.0.0.1:${port}`, heads };
-}
-
-describe('establishProxyTunnel — the pin survives the proxy', () => {
-  it('asks the proxy for the validated IP, never the hostname', async () => {
-    // If the hostname reached the proxy, the proxy would resolve it and pick the peer —
-    // which is exactly the guarantee option C exists to keep.
-    const proxy = await startFakeProxy('accept');
-    resolvesTo({ address: '93.184.216.34', family: 4 });
-
-    await fetchClientIdMetadataDocument('https://client.example.com/m.json', { proxyUrl: proxy.url });
-
-    expect(proxy.heads).toHaveLength(1);
-    expect(proxy.heads[0]).toMatch(/^CONNECT 93\.184\.216\.34:443 HTTP\/1\.1\r\n/);
-    expect(proxy.heads[0]).toContain('Host: 93.184.216.34:443');
-    expect(proxy.heads[0]).not.toContain('client.example.com');
-  });
-
-  it('uses the URL port in the CONNECT authority', async () => {
-    const proxy = await startFakeProxy('accept');
-    resolvesTo({ address: '93.184.216.34', family: 4 });
-    await fetchClientIdMetadataDocument('https://client.example.com:8443/m.json', { proxyUrl: proxy.url });
-    expect(proxy.heads[0]).toMatch(/^CONNECT 93\.184\.216\.34:8443 /);
-  });
-
-  it('still refuses a target that resolves into a special-use range, proxy or not', async () => {
-    // The proxy must not become a way to launder a blocked destination.
-    const proxy = await startFakeProxy('accept');
-    resolvesTo({ address: '10.1.2.3', family: 4 });
-    const result = await fetchClientIdMetadataDocument('https://internal.example.com/m.json', {
-      proxyUrl: proxy.url,
-    });
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toBe('blocked_address');
-    expect(proxy.heads).toHaveLength(0); // never even contacted
-  });
-
-  it('allows the proxy itself to live on a special-use address', async () => {
-    // The proxy is operator-configured infrastructure and legitimately sits on 10.x/127.x;
-    // the special-use block governs the attacker-chosen target, not our own egress hop.
-    const proxy = await startFakeProxy('accept');
-    resolvesTo({ address: '93.184.216.34', family: 4 });
-    const result = await fetchClientIdMetadataDocument('https://client.example.com/m.json', {
-      proxyUrl: proxy.url,
-    });
-    expect(proxy.heads).toHaveLength(1);
-    // The tunnel opened; TLS then fails because the fake proxy speaks no TLS behind it.
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toBe('tls_failure');
-  });
-
-  it('sends Proxy-Authorization only when the proxy URL carries credentials', async () => {
-    const bare = await startFakeProxy('accept');
-    resolvesTo({ address: '93.184.216.34', family: 4 });
-    await fetchClientIdMetadataDocument('https://client.example.com/m.json', { proxyUrl: bare.url });
-    expect(bare.heads[0]).not.toMatch(/proxy-authorization/i);
-
-    const authed = await startFakeProxy('accept');
-    const withCreds = authed.url.replace('http://', 'http://alice:s3cret@');
-    await fetchClientIdMetadataDocument('https://client.example.com/m.json', { proxyUrl: withCreds });
-    const expected = Buffer.from('alice:s3cret', 'utf8').toString('base64');
-    expect(authed.heads[0]).toContain(`Proxy-Authorization: Basic ${expected}`);
-  });
-
-  it('reports a refused CONNECT rather than downgrading to a direct connection', async () => {
-    const proxy = await startFakeProxy('deny');
-    resolvesTo({ address: '93.184.216.34', family: 4 });
-    const result = await fetchClientIdMetadataDocument('https://client.example.com/m.json', {
-      proxyUrl: proxy.url,
-    });
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toBe('proxy_refused');
-  });
-
-  it('refuses a proxy that injects bytes after the CONNECT response', async () => {
-    // The tunnel is ours from the 200 onward; anything the proxy slips in ahead of our
-    // ClientHello is a protocol violation and possibly an injection attempt.
-    const proxy = await startFakeProxy('accept-then-inject');
-    resolvesTo({ address: '93.184.216.34', family: 4 });
-    const result = await fetchClientIdMetadataDocument('https://client.example.com/m.json', {
-      proxyUrl: proxy.url,
-    });
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toBe('proxy_refused');
-  });
-
-  it('times out on a proxy that accepts the socket and then says nothing', async () => {
-    const proxy = await startFakeProxy('silent');
-    resolvesTo({ address: '93.184.216.34', family: 4 });
-    const result = await fetchClientIdMetadataDocument('https://client.example.com/m.json', {
-      proxyUrl: proxy.url,
-      connectTimeoutMs: 150,
-    });
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toBe('timeout');
-  });
-
-  it('reports an unreachable proxy', async () => {
-    resolvesTo({ address: '93.184.216.34', family: 4 });
-    const result = await fetchClientIdMetadataDocument('https://client.example.com/m.json', {
-      proxyUrl: 'http://127.0.0.1:1',
-    });
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toBe('proxy_unreachable');
-  });
-
-  it('refuses a malformed or non-http proxy URL instead of ignoring it', async () => {
-    resolvesTo({ address: '93.184.216.34', family: 4 });
-    for (const proxyUrl of ['not-a-url', 'socks5://proxy.corp:1080', 'ftp://proxy.corp']) {
-      const result = await fetchClientIdMetadataDocument('https://client.example.com/m.json', { proxyUrl });
-      expect(result.ok, proxyUrl).toBe(false);
-      if (!result.ok) expect(result.reason, proxyUrl).toBe('proxy_config_invalid');
-    }
-  });
-
-  it('connects directly when proxyUrl is absent or blank', async () => {
-    resolvesTo({ address: '127.0.0.2', family: 4 });
-    // 127.0.0.2 is loopback, so a DIRECT attempt is refused by the address gate — which
-    // proves no tunnel was used and the normal path ran.
-    const result = await fetchClientIdMetadataDocument('https://client.example.com/m.json', { proxyUrl: '  ' });
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toBe('blocked_address');
-  });
-});
-
-describe('proxyFromEnvironment', () => {
-  it('reads HTTPS_PROXY and its lowercase spelling', () => {
-    expect(proxyFromEnvironment('client.example.com', { HTTPS_PROXY: 'http://p:3128' })).toBe('http://p:3128');
-    expect(proxyFromEnvironment('client.example.com', { https_proxy: 'http://p:3128' })).toBe('http://p:3128');
-    expect(proxyFromEnvironment('client.example.com', {})).toBeUndefined();
-    expect(proxyFromEnvironment('client.example.com', { HTTPS_PROXY: '   ' })).toBeUndefined();
-  });
-
-  it('honours NO_PROXY exact hosts, dot-suffixes, and the wildcard', () => {
-    const env = { HTTPS_PROXY: 'http://p:3128', NO_PROXY: 'client.example.com,.corp' };
-    expect(proxyFromEnvironment('client.example.com', env)).toBeUndefined();
-    expect(proxyFromEnvironment('a.corp', env)).toBeUndefined();
-    expect(proxyFromEnvironment('corp', env)).toBeUndefined();
-    expect(proxyFromEnvironment('other.example.com', env)).toBe('http://p:3128');
-    expect(proxyFromEnvironment('anything', { HTTPS_PROXY: 'http://p:3128', NO_PROXY: '*' })).toBeUndefined();
   });
 });

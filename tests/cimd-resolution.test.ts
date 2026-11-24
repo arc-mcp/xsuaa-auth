@@ -10,9 +10,10 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CimdCache, ttlFromCacheHeaders } from '../src/cimd-cache.js';
-import { cimdRedirectUriMatches, validateCimdDocument } from '../src/cimd-document.js';
+import { validateCimdDocument } from '../src/cimd-document.js';
 import { CimdResolver } from '../src/cimd-resolver.js';
 import { StatelessDcrClientStore } from '../src/index.js';
+import { redirectUriMatches as cimdRedirectUriMatches } from '../src/internal/sdk.js';
 import { makeCapturingLogger } from './helpers/test-logger.js';
 
 const mockFetch = vi.hoisted(() => vi.fn());
@@ -96,6 +97,14 @@ describe('validateCimdDocument', () => {
       const r = validateCimdDocument(URL_ID, goodDoc(overrides));
       expect(r.ok, reason).toBe(false);
       if (!r.ok) expect(r.reason, JSON.stringify(overrides).slice(0, 60)).toBe(reason);
+    }
+  });
+
+  it('refuses userinfo or a fragment in a redirect URI, like registration does', () => {
+    for (const uri of ['https://user:pw@claude.ai/cb', 'https://claude.ai/cb#frag']) {
+      const result = validateCimdDocument(URL_ID, goodDoc({ redirect_uris: [uri] }));
+      expect(result.ok, uri).toBe(false);
+      if (!result.ok) expect(result.reason, uri).toBe('redirect_uri_invalid');
     }
   });
 
@@ -345,6 +354,39 @@ describe('StatelessDcrClientStore — CIMD integration', () => {
     mockFetch.mockResolvedValue({ ok: false, reason: 'timeout' });
     const { store } = makeStore({});
     expect(await store.checkRedirectUri(URL_ID, 'https://claude.ai/api/mcp/auth_callback')).toBe('unknown_client');
+  });
+
+  it('binds a document to the operator redirect allowlist, like a registration', async () => {
+    const store = new StatelessDcrClientStore(XSUAA_ID, 'xsuaa-secret', 'signing-secret-long-enough', {
+      dcrRedirectUriPatterns: ['https://claude.ai/**'],
+      cimd: {},
+    });
+    serves(goodDoc({ redirect_uris: ['https://claude.ai/api/mcp/auth_callback', 'https://attacker.example/cb'] }));
+    expect((await store.getClient(URL_ID))?.redirect_uris).toEqual(['https://claude.ai/api/mcp/auth_callback']);
+    expect(await store.checkRedirectUri(URL_ID, 'https://attacker.example/cb')).toBe('unregistered');
+  });
+
+  it('refuses a document whose redirect URIs are all outside the allowlist', async () => {
+    const logger = makeCapturingLogger();
+    const store = new StatelessDcrClientStore(XSUAA_ID, 'xsuaa-secret', 'signing-secret-long-enough', {
+      dcrRedirectUriPatterns: ['https://claude.ai/**'],
+      cimd: {},
+      logger,
+    });
+    serves(goodDoc({ redirect_uris: ['https://attacker.example/cb'] }));
+    expect(await store.getClient(URL_ID)).toBeUndefined();
+    expect(
+      logger.audit.some((e) => e.event === 'oauth_cimd_rejected' && e.reason === 'redirect_uri_not_allowlisted'),
+    ).toBe(true);
+  });
+
+  it('applies the store scheme policy to a document unless the caller narrows it', async () => {
+    const store = new StatelessDcrClientStore(XSUAA_ID, 'xsuaa-secret', 'signing-secret-long-enough', {
+      redirectUriPatterns: ['myapp://*'],
+      cimd: {},
+    });
+    serves(goodDoc({ redirect_uris: ['myapp://callback'] }));
+    expect((await store.getClient(URL_ID))?.redirect_uris).toEqual(['myapp://callback']);
   });
 
   it('ensureRedirectUri is a no-op for CIMD clients — the document is the client’s to state', async () => {

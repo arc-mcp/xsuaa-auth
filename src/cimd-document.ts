@@ -18,7 +18,7 @@
  *    simple string comparison. This is the whole binding between the URL we fetched and
  *    the identity we hand back; without it any host could claim any client_id.
  *  - **N5** redirect URLs MUST be registered, and the one in an authorization request MUST
- *    match a registered one. See {@link cimdRedirectUriMatches} for the one deliberate,
+ *    match a registered one. See {@link cimdRedirectUriRegistered} for the one deliberate,
  *    documented deviation.
  *  - **N11** metadata values come from the RFC 7591 registry.
  *  - **N12** symmetric client authentication is forbidden. A CIMD client is public by
@@ -26,7 +26,7 @@
  *    secret whenever `getClient` reports one, so a public client must report none.
  */
 
-import type { OAuthClientInformationFull } from './internal/sdk.js';
+import { type OAuthClientInformationFull, redirectUriMatches } from './internal/sdk.js';
 import { validateRedirectUri, XSUAA_DEFAULT_REDIRECT_URI_PATTERNS } from './redirect-uris.js';
 
 /** Grant types this server can actually honour. Anything else in a document is dropped. */
@@ -79,7 +79,7 @@ export interface CimdDocumentAccepted {
   /**
    * The document's declared `application_type`, retained for observability only. It is
    * deliberately NOT consulted when matching redirect URIs — see
-   * {@link cimdRedirectUriMatches}.
+   * {@link cimdRedirectUriRegistered}.
    */
   applicationType?: string;
 }
@@ -93,55 +93,13 @@ const stringArray = (value: unknown): string[] | undefined =>
   Array.isArray(value) && value.every((entry) => typeof entry === 'string') ? (value as string[]) : undefined;
 
 /**
- * Loopback hosts, byte-identical to the MCP SDK's own set — including the bracketed IPv6
- * form, which is what `URL.hostname` yields for `http://[::1]:8080/cb`.
+ * True when `uri` matches any entry in `registered` under the SDK's own `/authorize`
+ * comparison: exact match, or RFC 8252 §7.3 port relaxation between two loopback URIs.
+ * Using the SDK's function keeps `/oauth/callback` from being stricter than `/authorize`,
+ * which would drop a code that was already minted. `application_type` is not consulted.
  */
-const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
-
-/**
- * Decide whether a requested redirect URI matches a registered one.
- *
- * ── The deviation, and why it is the safer choice ──
- * The draft (N5) requires exact simple string comparison. This function additionally
- * relaxes the PORT when both URIs target a loopback host, per RFC 8252 §7.3.
- *
- * That is not a convenience. The MCP SDK's `/authorize` handler already applies exactly
- * this relaxation, and it cannot be configured away. If this end were stricter, a native
- * client would pass `/authorize` and then be refused at `/oauth/callback` — the code would
- * already have been minted and would simply never be delivered. Strictness there buys no
- * security (the decision that mattered happened at `/authorize`) and breaks every native
- * client, which cannot know its ephemeral port when it publishes a STATIC hosted document.
- *
- * An earlier design gated the relaxation on `application_type: "native"`. Mirroring the
- * SDK unconditionally replaced that: gating would make this end stricter than `/authorize`
- * for a `web` document that lists a loopback URI, reintroducing the very disagreement the
- * alignment exists to remove. `application_type` is therefore recorded, not obeyed.
- *
- * Relaxation stays confined to loopback-to-loopback; scheme, host, path and query must
- * still match exactly, and `localhost` does not cross-match `127.0.0.1`.
- */
-export function cimdRedirectUriMatches(requested: string, registered: string): boolean {
-  if (requested === registered) return true;
-  let req: URL;
-  let reg: URL;
-  try {
-    req = new URL(requested);
-    reg = new URL(registered);
-  } catch {
-    return false;
-  }
-  if (!LOOPBACK_HOSTS.has(req.hostname) || !LOOPBACK_HOSTS.has(reg.hostname)) return false;
-  return (
-    req.protocol === reg.protocol &&
-    req.hostname === reg.hostname &&
-    req.pathname === reg.pathname &&
-    req.search === reg.search
-  );
-}
-
-/** True when `uri` matches any entry in `registered` under {@link cimdRedirectUriMatches}. */
 export function cimdRedirectUriRegistered(uri: string, registered: readonly string[]): boolean {
-  return registered.some((entry) => cimdRedirectUriMatches(uri, entry));
+  return registered.some((entry) => redirectUriMatches(uri, entry));
 }
 
 /**
@@ -179,6 +137,9 @@ export function validateCimdDocument(
       // Reuse the package's own validator rather than reimplementing it: it carries
       // non-obvious fixes for authority smuggling and it fails closed on unknown schemes.
       validateRedirectUri(uri, patterns);
+      // Same refusal as `registerClient`: no userinfo and no fragment in a redirect target.
+      const parsedUri = new URL(uri);
+      if (parsedUri.username || parsedUri.password || uri.includes('#')) throw new Error('redirect shape');
     } catch {
       return { ok: false, reason: 'redirect_uri_invalid' };
     }

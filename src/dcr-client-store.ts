@@ -150,13 +150,15 @@ export interface StatelessDcrClientStoreOptions {
   redirectUriPatterns?: readonly string[];
 
   /**
-   * Optional allowlist for DCR redirect URIs, using the same glob syntax as
+   * Optional allowlist for DCR and CIMD redirect URIs, using the same glob syntax as
    * `redirectUriPatterns`, but with case-sensitive paths and queries. When set,
    * the whole registration fails if any redirect URI does not match (HTTP 400
    * `invalid_client_metadata`). This only narrows the base scheme policy and
    * does not cover the pre-registered default client. Earlier client IDs are
    * filtered at lookup; widening the list restores previously excluded URIs.
    * An empty array rejects every DCR redirect but leaves /register mounted.
+   * A CIMD document's redirect URIs are filtered the same way at lookup, and a
+   * document with none left is refused.
    * Default: unset (no additional restriction). Approval is always required.
    */
   dcrRedirectUriPatterns?: readonly string[];
@@ -242,7 +244,19 @@ export class StatelessDcrClientStore implements OAuthRegisteredClientsStore {
     this.bakedRedirectUriCount = this.xsuaaClient.redirect_uris.length;
     this.ttlSeconds = options.ttlSeconds ?? DEFAULT_TTL_SECONDS;
     this.now = options.now ?? (() => Date.now());
-    this.cimd = options.cimd ? new CimdResolver({ logger: this.logger, ...options.cimd }) : undefined;
+    this.cimd = options.cimd
+      ? new CimdResolver({
+          logger: this.logger,
+          ...options.cimd,
+          // Same scheme policy as registration unless the caller narrows it further.
+          document: { redirectUriPatterns: this.redirectUriPatterns, ...options.cimd.document },
+        })
+      : undefined;
+  }
+
+  /** True when URL client_ids (Client ID Metadata Documents) resolve. */
+  get cimdEnabled(): boolean {
+    return this.cimd !== undefined;
   }
 
   // ── OAuthRegisteredClientsStore implementation ──
@@ -479,7 +493,7 @@ export class StatelessDcrClientStore implements OAuthRegisteredClientsStore {
     // Matches the SDK's `/authorize` comparison rather than a bare `includes`. The two
     // ends must agree: `/authorize` already applies RFC 8252 loopback port relaxation, so
     // a stricter check here refuses a code that was ALREADY minted for this URI — no
-    // security gained, a broken native client lost. See `cimdRedirectUriMatches`.
+    // security gained, a broken native client lost. See `cimdRedirectUriRegistered`.
     return cimdRedirectUriRegistered(uri, info.redirect_uris) ? 'ok' : 'unregistered';
   }
 
@@ -500,15 +514,22 @@ export class StatelessDcrClientStore implements OAuthRegisteredClientsStore {
       this.emitCimdFailure(clientId, result.reason, result.cacheHit);
       return undefined;
     }
+    // The operator's redirect allowlist binds a document exactly as it binds a registration;
+    // filtered per lookup (the cache holds the document as published), like `payloadToClientInfo`.
+    const redirectUris = result.resolution.client.redirect_uris.filter((uri) => this.isAllowedDcrRedirect(uri));
+    if (redirectUris.length === 0) {
+      this.emitCimdFailure(clientId, 'redirect_uri_not_allowlisted', result.cacheHit);
+      return undefined;
+    }
     this.logger.emitAudit?.({
       timestamp: new Date().toISOString(),
       level: 'info',
       event: 'oauth_cimd_resolved',
       clientIdUrl: clientId,
-      redirectUriCount: result.resolution.client.redirect_uris.length,
+      redirectUriCount: redirectUris.length,
       cacheHit: result.cacheHit,
     });
-    return result.resolution;
+    return { ...result.resolution, client: { ...result.resolution.client, redirect_uris: redirectUris } };
   }
 
   private emitCimdFailure(clientId: string, reason: string, cacheHit: boolean): void {

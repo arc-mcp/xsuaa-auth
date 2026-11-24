@@ -41,30 +41,9 @@
  * does not dereference any URL found inside a document — the draft's SSRF rule extends to
  * `logo_uri`/`jwks_uri`/… and this package answers that by never fetching them at all.
  *
- * ── Forward proxies, without giving away the pin ──
- * Handing a hostname to a proxy would destroy every guarantee above: the proxy, not this
- * process, would resolve the name and choose the peer, so a `CONNECT` aimed at an internal
- * host would sail past the address checks. Naive proxy support is therefore not an option.
- *
- * What this module does instead is resolve and validate the address ITSELF, then ask the
- * proxy for a tunnel to that **IP** — `CONNECT 93.184.216.34:443`, never
- * `CONNECT client.example.com:443`. The proxy resolves nothing and substitutes nothing; it
- * only opens a pipe to an address this process already approved. TLS is then terminated
- * here, inside the tunnel, with SNI and certificate validation bound to the real hostname.
- * The pin survives the proxy.
- *
- * Two consequences operators must know:
- *  - A proxy that refuses `CONNECT` to a bare IP (many policy-enforcing proxies do, because
- *    their filtering wants a name) cannot be used. That surfaces as `proxy_refused`, not as
- *    a silent downgrade.
- *  - A TLS-INTERCEPTING proxy will fail certificate validation, because the certificate
- *    presented is the interceptor's. That is the correct outcome: failing is better than
- *    trusting an interceptor. Such a deployment must trust the interception CA at the
- *    process level (`NODE_EXTRA_CA_CERTS`) as an explicit operator decision.
- *
- * The proxy address itself is deliberately NOT subject to the special-use block. A
- * corporate proxy legitimately lives on 10.x or 127.0.0.1, and it is operator-configured
- * rather than attacker-chosen — the untrusted input here is the TARGET, never the proxy.
+ * ── No forward proxy ──
+ * ponytail: direct egress only. A proxy must be handed the validated IP, never the hostname,
+ * and needs a live proxy to test against; add it when a deployment needs one.
  *
  * ── Error discipline ──
  * A failure carries ONLY a reason code from a closed vocabulary. No exception text, no
@@ -82,10 +61,8 @@ import { lookup as dnsLookupCb } from 'node:dns';
 import type { ClientRequest, IncomingMessage } from 'node:http';
 import type { RequestOptions } from 'node:https';
 import { request as httpsRequest } from 'node:https';
-import type { LookupFunction, Socket } from 'node:net';
-import { isIP, connect as netConnect } from 'node:net';
-import type { TLSSocket } from 'node:tls';
-import { connect as tlsConnect } from 'node:tls';
+import type { LookupFunction } from 'node:net';
+import { isIP } from 'node:net';
 
 /**
  * Closed vocabulary of refusal reasons. Audit-only — never surfaced to the OAuth client.
@@ -124,13 +101,7 @@ export type CimdFetchFailureReason =
   /** Response was compressed although no compression was requested. */
   | 'content_encoding_refused'
   /** Socket-level failure (refused, reset, unreachable). */
-  | 'network_error'
-  /** `proxyUrl` is not a usable absolute http(s) URL. Operator misconfiguration. */
-  | 'proxy_config_invalid'
-  /** The configured proxy could not be reached. */
-  | 'proxy_unreachable'
-  /** The proxy answered the CONNECT with a non-2xx status, or spoke it badly. */
-  | 'proxy_refused';
+  | 'network_error';
 
 export interface CimdFetchSuccess {
   ok: true;
@@ -172,17 +143,6 @@ export interface CimdFetchOptions {
   globalTimeoutMs?: number;
   /** Response-size cap in bytes, enforced while streaming. Default 5120 (draft §5 KiB). */
   maxBytes?: number;
-  /**
-   * Absolute URL of a forward proxy to tunnel through, e.g. `http://proxy.corp:3128` or
-   * `http://user:pass@proxy.corp:3128`. Omitted means connect directly.
-   *
-   * Deliberately an explicit option rather than an implicit read of `HTTPS_PROXY`: whether
-   * outbound traffic is proxied is a deployment policy the consumer owns, and a transport
-   * that silently changes shape because an environment variable happens to be set is the
-   * kind of surprise this module exists to avoid. Consumers that DO want the environment's
-   * setting can opt in with {@link proxyFromEnvironment}.
-   */
-  proxyUrl?: string;
 }
 
 /**
@@ -200,6 +160,7 @@ const DEFAULT_CONNECT_TIMEOUT_MS = 2_000;
 const DEFAULT_GLOBAL_TIMEOUT_MS = 5_000;
 /** The draft's recommended maximum read size is 5 kilobytes. */
 const DEFAULT_MAX_BYTES = 5_120;
+const MAX_CLIENT_ID_URL_LENGTH = 2_048;
 
 /**
  * Hostname suffixes that are internal by convention and must never be dereferenced,
@@ -340,6 +301,8 @@ function isBlockedIpv6(hextets: readonly number[]): boolean {
   if (h0 === 0x0100 && h1 === 0 && h2 === 0 && h3 === 0) return true; // discard-only
   if ((h0 & 0xfe00) === 0xfc00) return true; // unique local fc00::/7
   if ((h0 & 0xffc0) === 0xfe80) return true; // link-local fe80::/10
+  if ((h0 & 0xffc0) === 0xfec0) return true; // site-local fec0::/10 (deprecated)
+  if (h0 === 0x0064 && h1 === 0xff9b && h2 === 0x0001) return true; // local-use NAT64 64:ff9b:1::/48
   if ((h0 & 0xff00) === 0xff00) return true; // multicast ff00::/8
   return false;
 }
@@ -413,6 +376,8 @@ export function validateClientIdUrl(
   raw: string,
   allowedHosts?: readonly string[],
 ): { ok: true; url: URL } | CimdFetchFailure {
+  // The raw string is a cache key and an audit field; an unauthenticated caller picks its size.
+  if (raw.length > MAX_CLIENT_ID_URL_LENGTH) return { ok: false, reason: 'shape' };
   let url: URL;
   try {
     url = new URL(raw);
@@ -465,34 +430,6 @@ export function hostAllowed(hostname: string, allowedHosts?: readonly string[]):
     if (host === entry) return true;
   }
   return false;
-}
-
-/**
- * Read a proxy URL from the environment the way the surrounding ecosystem expects
- * (`HTTPS_PROXY`/`https_proxy`, with `NO_PROXY`/`no_proxy` exclusions), for consumers that
- * want to opt into the environment's setting.
- *
- * Provided as a helper rather than applied automatically: see the note on
- * {@link CimdFetchOptions.proxyUrl}. A `NO_PROXY` entry of `*` disables proxying entirely;
- * other entries match the host exactly or as a dot-suffix (`.corp` covers `a.corp`).
- */
-export function proxyFromEnvironment(
-  targetHost: string,
-  env: Record<string, string | undefined> = process.env,
-): string | undefined {
-  const proxy = env.HTTPS_PROXY ?? env.https_proxy;
-  if (!proxy || proxy.trim() === '') return undefined;
-
-  const noProxy = env.NO_PROXY ?? env.no_proxy ?? '';
-  const host = normalizeHost(targetHost);
-  for (const rawEntry of noProxy.split(',')) {
-    const entry = normalizeHost(rawEntry.trim());
-    if (entry === '') continue;
-    if (entry === '*') return undefined;
-    const suffix = entry.startsWith('.') ? entry : `.${entry}`;
-    if (host === entry.replace(/^\./, '') || host.endsWith(suffix)) return undefined;
-  }
-  return proxy.trim();
 }
 
 // ─── The fetch ────────────────────────────────────────────────────────
@@ -551,140 +488,7 @@ export async function fetchClientIdMetadataDocument(
   const pinned = addresses[0];
   if (!pinned) return { ok: false, reason: 'dns_failure' };
 
-  if (options.proxyUrl !== undefined && options.proxyUrl.trim() !== '') {
-    const startedAt = Date.now();
-    const tunnel = await establishProxyTunnel(
-      options.proxyUrl,
-      {
-        address: pinned.address,
-        port: Number(url.port || 443),
-        servername: url.hostname,
-      },
-      connectTimeoutMs,
-    );
-    if (!tunnel.ok) return tunnel;
-
-    // The tunnel's cost comes out of the same overall budget, so a slow proxy cannot buy
-    // the request a second full deadline.
-    const remaining = globalTimeoutMs - (Date.now() - startedAt);
-    if (remaining <= 0) {
-      tunnel.socket.destroy();
-      return { ok: false, reason: 'timeout' };
-    }
-    return await performPinnedRequest(
-      url,
-      pinned,
-      { connectTimeoutMs, globalTimeoutMs: remaining, maxBytes },
-      httpsRequest,
-      () => tunnel.socket,
-    );
-  }
-
   return await performPinnedRequest(url, pinned, { connectTimeoutMs, globalTimeoutMs, maxBytes });
-}
-
-/**
- * Open a CONNECT tunnel through `proxyUrl` to the already-validated `address:port`, then
- * complete the TLS handshake for `servername` inside it.
- *
- * The CONNECT target is the validated IP, never the hostname — that is the entire point.
- * The proxy therefore performs no resolution and cannot substitute a peer, so the pin
- * established before this call still holds on the far side of it.
- */
-export function establishProxyTunnel(
-  proxyUrl: string,
-  target: { address: string; port: number; servername: string },
-  timeoutMs: number,
-): Promise<{ ok: true; socket: TLSSocket } | CimdFetchFailure> {
-  return new Promise((resolve) => {
-    let proxy: URL;
-    try {
-      proxy = new URL(proxyUrl);
-    } catch {
-      resolve({ ok: false, reason: 'proxy_config_invalid' });
-      return;
-    }
-    if (proxy.protocol !== 'http:' && proxy.protocol !== 'https:') {
-      resolve({ ok: false, reason: 'proxy_config_invalid' });
-      return;
-    }
-    const proxyPort = Number(proxy.port || (proxy.protocol === 'https:' ? 443 : 80));
-    if (!Number.isInteger(proxyPort) || proxyPort <= 0 || proxyPort > 65535) {
-      resolve({ ok: false, reason: 'proxy_config_invalid' });
-      return;
-    }
-
-    let settled = false;
-    let raw: Socket | undefined;
-    let tls: TLSSocket | undefined;
-    const timer = setTimeout(() => finish({ ok: false, reason: 'timeout' }), timeoutMs);
-
-    const finish = (result: { ok: true; socket: TLSSocket } | CimdFetchFailure): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (!result.ok) {
-        tls?.destroy();
-        raw?.destroy();
-      }
-      resolve(result);
-    };
-
-    // The proxy is operator-configured infrastructure, so its address is intentionally
-    // exempt from the special-use block that governs the attacker-chosen target.
-    raw = netConnect({ host: proxy.hostname, port: proxyPort });
-    raw.on('error', () => finish({ ok: false, reason: 'proxy_unreachable' }));
-
-    raw.on('connect', () => {
-      const authority = `${target.address}:${target.port}`;
-      const lines = [`CONNECT ${authority} HTTP/1.1`, `Host: ${authority}`];
-      if (proxy.username !== '' || proxy.password !== '') {
-        // Credentials for the operator's OWN proxy. They ride the CONNECT only and never
-        // enter the tunnel, so the request to the client's host stays unauthenticated.
-        const creds = `${decodeURIComponent(proxy.username)}:${decodeURIComponent(proxy.password)}`;
-        lines.push(`Proxy-Authorization: Basic ${Buffer.from(creds, 'utf8').toString('base64')}`);
-      }
-      raw?.write(`${lines.join('\r\n')}\r\n\r\n`);
-    });
-
-    let head = '';
-    const onData = (chunk: Buffer): void => {
-      head += chunk.toString('binary');
-      // Bound the handshake buffer; a proxy that streams headers forever is refused.
-      if (head.length > 8192) {
-        finish({ ok: false, reason: 'proxy_refused' });
-        return;
-      }
-      const end = head.indexOf('\r\n\r\n');
-      if (end === -1) return;
-      raw?.removeListener('data', onData);
-
-      const status = Number(/^HTTP\/1\.[01] (\d{3})/.exec(head)?.[1] ?? 0);
-      if (status < 200 || status > 299) {
-        finish({ ok: false, reason: 'proxy_refused' });
-        return;
-      }
-      // Nothing may follow the CONNECT response: the tunnel is ours from here, and bytes
-      // the proxy injected ahead of our TLS ClientHello are a protocol violation.
-      if (head.length > end + 4) {
-        finish({ ok: false, reason: 'proxy_refused' });
-        return;
-      }
-
-      if (!raw) {
-        finish({ ok: false, reason: 'proxy_unreachable' });
-        return;
-      }
-      // Terminate TLS ourselves, bound to the REAL hostname, so SNI and certificate
-      // validation are exactly what they would have been on a direct connection.
-      tls = tlsConnect({ socket: raw, servername: target.servername, host: target.servername });
-      tls.on('error', () => finish({ ok: false, reason: 'tls_failure' }));
-      tls.on('secureConnect', () => {
-        if (tls) finish({ ok: true, socket: tls });
-      });
-    };
-    raw.on('data', onData);
-  });
 }
 
 /**
@@ -697,10 +501,6 @@ export function establishProxyTunnel(
  * `fetchClientIdMetadataDocument` gates both before calling, and `https:` is enforced in
  * `validateClientIdUrl`. Production never passes this argument.
  *
- * `createConnection` supplies an already-connected transport, which is how the proxy path
- * hands over its TLS-over-CONNECT socket. When it is present the pin has already been
- * enforced by the CONNECT target, so no `lookup` is installed.
- *
  * Exported for tests only; deliberately not re-exported from `index.ts`.
  */
 export function performPinnedRequest(
@@ -708,7 +508,6 @@ export function performPinnedRequest(
   pinned: { address: string; family: number },
   limits: { connectTimeoutMs: number; globalTimeoutMs: number; maxBytes: number },
   requestImpl: RequestImpl = httpsRequest,
-  createConnection?: () => Socket,
 ): Promise<CimdFetchResult> {
   return new Promise<CimdFetchResult>((resolve) => {
     let settled = false;
@@ -739,7 +538,7 @@ export function performPinnedRequest(
       url,
       {
         method: 'GET',
-        ...(createConnection ? { createConnection } : { lookup: pinnedLookup }),
+        lookup: pinnedLookup,
         // SNI and certificate validation stay bound to the real hostname — pinning
         // changes which address we dial, never whether the certificate must match.
         servername: url.hostname,

@@ -47,8 +47,6 @@ export type CimdResolveResult =
 export interface CimdResolverOptions {
   /** Host allowlist. Empty or omitted means open — see the package README. */
   allowedHosts?: readonly string[];
-  /** Forward proxy to tunnel through. See `cimd-fetch.ts`. */
-  proxyUrl?: string;
   /** Transport tuning passed through to the fetcher. */
   fetch?: Pick<CimdFetchOptions, 'connectTimeoutMs' | 'globalTimeoutMs' | 'maxBytes'>;
   /** Document-shape caps. */
@@ -71,7 +69,6 @@ const TRANSIENT_REASONS: ReadonlySet<string> = new Set<CimdResolutionFailure>([
   'network_error',
   'tls_failure',
   'bad_status',
-  'proxy_unreachable',
 ]);
 
 export class CimdResolver {
@@ -126,7 +123,6 @@ export class CimdResolver {
 
     const fetched = await fetchClientIdMetadataDocument(clientId, {
       ...(this.options.allowedHosts ? { allowedHosts: this.options.allowedHosts } : {}),
-      ...(this.options.proxyUrl !== undefined ? { proxyUrl: this.options.proxyUrl } : {}),
       ...this.options.fetch,
     });
     if (!fetched.ok) return this.remember(clientId, { ok: false, reason: fetched.reason });

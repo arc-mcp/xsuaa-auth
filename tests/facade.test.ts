@@ -99,6 +99,21 @@ describe('setupHttpAuth — xsuaa mode', () => {
     return { app, logger };
   }
 
+  it('advertises Client ID Metadata Documents only when cimd is configured', async () => {
+    const off = await request(buildXsuaaApp().app).get('/.well-known/oauth-authorization-server');
+    expect(off.body.client_id_metadata_document_supported).toBeUndefined();
+
+    const app = express();
+    setupHttpAuth(app, { xsuaa: { credentials: XSUAA_CREDS, appUrl: APP_URL, cimd: {} } }, makeCapturingLogger());
+    const on = await request(app).get('/.well-known/oauth-authorization-server');
+    expect(on.status).toBe(200);
+    expect(on.body.client_id_metadata_document_supported).toBe(true);
+    // Everything else is the SDK's own metadata, and the rest of the router still answers.
+    expect(on.body.authorization_endpoint).toBe(`${APP_URL}/authorize`);
+    expect(on.body.registration_endpoint).toBe(`${APP_URL}/register`);
+    expect((await request(app).get('/.well-known/oauth-protected-resource/mcp')).status).toBe(200);
+  });
+
   it('mounts the SDK OAuth authorization-server metadata (.well-known)', async () => {
     const { app } = buildXsuaaApp();
     const res = await request(app).get('/.well-known/oauth-authorization-server');
