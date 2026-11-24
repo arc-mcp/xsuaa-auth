@@ -20,6 +20,7 @@
  */
 
 import type { Response } from 'express';
+import type { CimdResolverOptions } from './cimd-resolver.js';
 import { StatelessDcrClientStore } from './dcr-client-store.js';
 import type { OAuthClientInformationFull, OAuthRegisteredClientsStore } from './internal/sdk.js';
 import { InvalidGrantError, ProxyOAuthServerProvider } from './internal/sdk.js';
@@ -132,6 +133,11 @@ export class XsuaaProxyOAuthProvider extends ProxyOAuthServerProvider {
    * Here `/oauth/callback` does, and it appends the `iss` carried in the signed state.
    */
   override authorizationResponseIssParameterSupported = true;
+
+  /** True when URL client_ids resolve; `mcpAuthRouter` advertises the capability from this. */
+  get clientIdMetadataDocumentSupported(): boolean {
+    return this._localClientStore.cimdEnabled;
+  }
 
   /**
    * Override clientsStore to expose registerClient for DCR.
@@ -426,6 +432,11 @@ export interface CreateXsuaaOAuthProviderOptions {
    * `${appUrl}/oauth/callback`.
    */
   callbackUrl?: string;
+  /**
+   * Enable Client ID Metadata Document identities (CIMD, SEP-991) alongside DCR.
+   * Omitted means OFF. See {@link StatelessDcrClientStoreOptions.cimd}.
+   */
+  cimd?: CimdResolverOptions;
   /** Injected structural logger. Default: silent no-op. */
   logger?: Logger;
 }
@@ -480,6 +491,7 @@ export function createXsuaaOAuthProvider(
     redirectUriPatterns: options.redirectUriPatterns,
     dcrRedirectUriPatterns: options.dcrRedirectUriPatterns,
     defaultRedirectUris: options.defaultRedirectUris,
+    ...(options.cimd ? { cimd: options.cimd } : {}),
     logger,
   });
   // The provider's own verifyAccessToken (used for the OAuth /token introspection

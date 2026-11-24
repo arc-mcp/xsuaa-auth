@@ -21,6 +21,7 @@
 
 import { type Express, type RequestHandler, urlencoded } from 'express';
 import { createOAuthCallbackHandler } from './callback.js';
+import type { CimdResolverOptions } from './cimd-resolver.js';
 import { applyCors } from './cors.js';
 import { getOAuthProtectedResourceMetadataUrl, mcpAuthRouter, requireBearerAuth } from './internal/sdk.js';
 import type { Logger } from './logger.js';
@@ -53,6 +54,8 @@ export interface AuthOptions {
     dcrRedirectUriPatterns?: readonly string[];
     /** Initial default-client URIs; each must also match redirectUriPatterns at the callback. */
     defaultRedirectUris?: readonly string[];
+    /** Resolve Client ID Metadata Document identities (URL client_ids). Omitted means off. */
+    cimd?: CimdResolverOptions;
     dcrTtlSeconds?: number;
     dcrEnabled?: boolean;
     /** Legacy codec state lifetime. Browser-approved flows are always capped at ten minutes. */
@@ -177,6 +180,7 @@ export function setupHttpAuth(
       redirectUriPatterns: xsuaa.redirectUriPatterns,
       dcrRedirectUriPatterns: xsuaa.dcrRedirectUriPatterns,
       defaultRedirectUris: xsuaa.defaultRedirectUris,
+      cimd: xsuaa.cimd,
       callbackUrl: xsuaa.callbackUrl,
       logger,
     });

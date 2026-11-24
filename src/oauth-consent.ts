@@ -1,5 +1,6 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { Request, Response } from 'express';
+import { CimdResolver } from './cimd-resolver.js';
 import type { OAuthClientInformationFull } from './internal/sdk.js';
 import { renderConsentErrorPage, renderConsentPage } from './oauth-consent-page.js';
 
@@ -180,6 +181,8 @@ export class OAuthConsent {
         renderConsentPage({
           authorizationUrl: this.authorizationUrl,
           clientName: client.client_name,
+          // Only a CIMD client_id is an https URL; DCR ids and the XSUAA id never parse as one.
+          clientIdHost: CimdResolver.isUrlClientId(client.client_id) ? new URL(client.client_id).host : undefined,
           redirectUri: params.redirectUri,
           scopes: params.scopes,
           expiresInSeconds: FLOW_SECONDS,

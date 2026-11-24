@@ -12,11 +12,15 @@
  */
 
 import {
+  type AuthRouterOptions,
   type BearerAuthMiddlewareOptions,
+  createOAuthMetadata,
+  mcpAuthRouter as legacyMcpAuthRouter,
   requireBearerAuth as legacyRequireBearerAuth,
+  metadataHandler,
   type OAuthRegisteredClientsStore,
 } from '@modelcontextprotocol/server-legacy/auth';
-import type { RequestHandler } from 'express';
+import { type RequestHandler, Router } from 'express';
 
 export type { AuthInfo, OAuthRegisteredClientsStore } from '@modelcontextprotocol/server-legacy/auth';
 export {
@@ -25,10 +29,10 @@ export {
   InvalidClientMetadataError,
   InvalidGrantError,
   InvalidTokenError,
-  mcpAuthRouter,
   metadataHandler,
   OAuthError,
   ProxyOAuthServerProvider,
+  redirectUriMatches,
 } from '@modelcontextprotocol/server-legacy/auth';
 
 /**
@@ -47,6 +51,26 @@ export function requireBearerAuth(options: BearerAuthMiddlewareOptions): Request
       }
       next(err);
     });
+}
+
+/**
+ * The frozen SDK router cannot advertise Client ID Metadata Documents. When the provider
+ * resolves URL client_ids, serve the same metadata plus the flag ahead of the router, so the
+ * flag and the resolver cannot drift apart: an SDK client uses a URL client_id only when it
+ * sees `client_id_metadata_document_supported`.
+ */
+export function mcpAuthRouter(options: AuthRouterOptions): RequestHandler {
+  const router = legacyMcpAuthRouter(options);
+  if (
+    !('clientIdMetadataDocumentSupported' in options.provider && options.provider.clientIdMetadataDocumentSupported)
+  ) {
+    return router;
+  }
+  const metadata = { ...createOAuthMetadata(options), client_id_metadata_document_supported: true };
+  const withFlag = Router();
+  withFlag.use('/.well-known/oauth-authorization-server', metadataHandler(metadata));
+  withFlag.use(router);
+  return withFlag;
 }
 
 /** server-legacy does not re-export this type; derive it from the store contract. */

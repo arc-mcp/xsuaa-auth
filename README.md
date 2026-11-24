@@ -196,6 +196,36 @@ See [the attribute/principal contract and live-evidence gates](https://github.co
 
 ---
 
+## CIMD (SEP-991) — Client ID Metadata Documents
+
+The MCP authorization spec's 2026-07-28 revision deprecates Dynamic Client Registration in favor of **Client ID Metadata Documents**: instead of registering, a client's `client_id` *is* an HTTPS URL it hosts, pointing at a JSON document describing itself. The package resolves this alongside DCR — it does not replace it, and DCR keeps working unchanged.
+
+```ts
+// Facade
+setupHttpAuth(app, { xsuaa: { credentials, appUrl, cimd: {} } });
+
+// Building blocks
+const { provider, clientStore } = createXsuaaOAuthProvider(credentials, appUrl, {
+  cimd: {
+    // allowedHosts: ['claude.ai', '*.vscode.dev'],  // optional; empty/omitted = any HTTPS host
+  },
+});
+app.use(mcpAuthRouter({ provider, issuerUrl, baseUrl, resourceServerUrl })); // this package's export
+```
+
+What to know before turning it on:
+
+- **Opt-in, and off by default.** Without `cimd`, an `https:`-shaped `client_id` is refused like any other unrecognized value and never reaches the DCR path.
+- **It makes an outbound HTTPS request to a URL supplied by an unauthenticated caller**, on the pre-authentication `/authorize` path. The fetch is hardened — HTTPS only, every resolved address checked against the RFC 6890 special-use ranges, the connection pinned to the checked address against DNS rebinding, redirects refused, a 5 KiB streaming cap, no credentials sent, and nothing inside the fetched document is ever dereferenced. Deployments next to a Cloud Connector should still weigh this before enabling it in production; `allowedHosts` narrows it to known client hosts.
+- **Direct egress only.** There is no forward-proxy support: `HTTPS_PROXY` is not read, and a deployment whose only way out is a proxy cannot use this yet.
+- **The metadata flag follows the option.** An SDK client uses a URL `client_id` only when the authorization server metadata says `client_id_metadata_document_supported: true`. `setupHttpAuth` and this package's `mcpAuthRouter` add the flag whenever `cimd` is set. If you serve your own authorization server metadata, add the flag yourself, and only together with `cimd`.
+- **`dcrRedirectUriPatterns` applies.** A document's redirect URIs are filtered by the same allowlist as registrations, and a document with none left is refused. `redirectUriPatterns` supplies the scheme policy unless `cimd.document.redirectUriPatterns` narrows it.
+- **A document proves control of a host, nothing else.** `client_name` is the client's own claim. The approval page labels it unverified and shows the host the document was fetched from.
+
+`CimdResolverOptions`, `CimdDocumentPolicy` and `CimdCacheOptions` are the exported option types; the resolver itself is internal.
+
+---
+
 ## `AuthOptions`
 
 The facade's configuration object. All fields are optional except where noted.
@@ -213,7 +243,8 @@ The facade's configuration object. All fields are optional except where noted.
 | `xsuaa.scopesSupported` | `string[]` | — | Advertised in OAuth metadata. **Also threaded to the XSUAA + OIDC verifiers as `acceptedScopes`** — set it to your own scope names (e.g. `['Viewer']`) so non-arc-1 scopes aren't filtered out of verified tokens. |
 | `xsuaa.requiredScopes` | `string[]` | — | Enforced via the SDK's `requireBearerAuth({ requiredScopes })`. |
 | `xsuaa.redirectUriPatterns` | `readonly string[]` | `XSUAA_DEFAULT_REDIRECT_URI_PATTERNS` | Redirect allowlist for the pre-registered default client; also permits extra DCR custom schemes. See [Redirect validation](#redirect-validation). |
-| `xsuaa.dcrRedirectUriPatterns` | `readonly string[]` | unset | Optional allowlist for DCR redirect URIs. Registration rejects non-matching URIs; earlier client_ids keep only matching URIs. `[]` rejects every DCR redirect. See [Redirect validation](#redirect-validation). |
+| `xsuaa.dcrRedirectUriPatterns` | `readonly string[]` | unset | Optional allowlist for DCR and CIMD redirect URIs. Registration rejects non-matching URIs; earlier client_ids keep only matching URIs. `[]` rejects every DCR redirect. See [Redirect validation](#redirect-validation). |
+| `xsuaa.cimd` | `CimdResolverOptions` | unset | Resolve Client ID Metadata Document identities (URL `client_id`s) and advertise the capability. Off when omitted; see [CIMD](#cimd-sep-991--client-id-metadata-documents). |
 | `xsuaa.defaultRedirectUris` | `readonly string[]` | `XSUAA_DEFAULT_REDIRECT_URIS` | Initial URIs for the default client; each must also match `redirectUriPatterns` at the callback. Narrow both lists together. |
 | `xsuaa.dcrEnabled` | `boolean` | `true` | Set `false` to remove `/register` and its discovery metadata. Existing registrations and manual clients remain usable, with browser approval. |
 | `xsuaa.dcrTtlSeconds` | `number` | `2592000` (30d) | DCR `client_id` lifetime. `0` disables expiry (recommended for clients that don't auto-re-register on `invalid_client`). |

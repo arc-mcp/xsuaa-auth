@@ -124,16 +124,51 @@ export type ExpandScopes = (scopes: string[]) => string[];
 export function loadXsuaaCredentials(env?: NodeJS.ProcessEnv): XsuaaCredentials;   // reads + validates the bound XSUAA service (VCAP_SERVICES / service binding)
 export function resolveAppUrl(env?: NodeJS.ProcessEnv, options?: { publicUrlEnvVar?: string; port?: number }): string;   // VCAP_APPLICATION route, overridable by a configurable public-URL env var (e.g. ARC1_PUBLIC_URL)
 
+// ─── CIMD (SEP-991) — Client ID Metadata Documents, resolved alongside DCR ───
+// A `client_id` shaped as an `https:` URL is fetched, validated, and cached as a client
+// identity instead of looked up in the DCR store. Passing `cimd` to SetupHttpAuth's `xsuaa`
+// block, CreateXsuaaOAuthProviderOptions or StatelessDcrClientStoreOptions turns it on. A
+// `client_id` that parses as `https:` while `cimd` is unset is refused like any other
+// unknown value — it never falls through to the DCR path. Only the option types are public;
+// the fetcher, document validation and resolver are internal. Direct egress only (no proxy).
+export interface CimdDocumentPolicy {
+  maxRedirectUris?: number;           // default 16
+  maxClientNameLength?: number;       // default 200
+  redirectUriPatterns?: readonly string[]; // default: the store's `redirectUriPatterns`
+}
+export interface CimdCacheOptions {
+  maxEntries?: number;                // default 256, LRU eviction
+  defaultTtlSeconds?: number;         // default 900 — used when the response has no cache headers
+  minTtlSeconds?: number;             // default 300 — floor on any header-derived TTL
+  maxTtlSeconds?: number;             // default 3600 — ceiling on any header-derived TTL
+  negativeTtlSeconds?: number;        // default 300 — a validation failure
+  transientNegativeTtlSeconds?: number; // default 30 — a network-level failure
+  now?: () => number;
+}
+export interface CimdResolverOptions {
+  allowedHosts?: readonly string[];   // exact host or single-label wildcard (`*.vscode.dev`); empty/omitted = open
+  fetch?: { connectTimeoutMs?: number; globalTimeoutMs?: number; maxBytes?: number };   // defaults 2000 / 5000 / 5120
+  document?: CimdDocumentPolicy;
+  cache?: CimdCacheOptions;
+  logger?: Logger;
+}
+// Redirect URIs from a document pass `dcrRedirectUriPatterns` exactly like a registration.
+// Redirect matching at the callback uses the SDK's own `/authorize` comparison (exact, or
+// RFC 8252 §7.3 port relaxation between two loopback URIs) for CIMD and DCR alike.
+// `mcpAuthRouter` (this package's export) adds `client_id_metadata_document_supported: true`
+// to the authorization server metadata when the provider was created with `cimd`.
+
 // ─── Stateless DCR client store ───
 export interface StatelessDcrClientStoreOptions {
   clientIdPrefix?: string;            // default 'mcp-'
   kdfLabel?: string;                  // default 'mcp-dcr/v1'  (domain-separation / revocation knob)
   ttlSeconds?: number;                // default 30d; 0 disables expiry
   redirectUriPatterns?: readonly string[]; // default XSUAA_DEFAULT_REDIRECT_URI_PATTERNS
-  dcrRedirectUriPatterns?: readonly string[]; // default unset; restricts DCR redirect URIs
+  dcrRedirectUriPatterns?: readonly string[]; // default unset; restricts DCR and CIMD redirect URIs
   defaultRedirectUris?: readonly string[];  // default XSUAA_DEFAULT_REDIRECT_URIS
   now?: () => number;
   logger?: Logger;
+  cimd?: CimdResolverOptions;         // omitted = CIMD off; an https: client_id is then refused, never routed to DCR
 }
 export class StatelessDcrClientStore /* implements OAuthRegisteredClientsStore */ {
   constructor(xsuaaClientId: string, xsuaaClientSecret: string, signingSecret: string, options?: StatelessDcrClientStoreOptions);
@@ -164,6 +199,9 @@ export interface CreateXsuaaOAuthProviderOptions {
   dcrTtlSeconds?: number; stateTtlSeconds?: number; dcrSigningSecret?: string;
   redirectUriPatterns?: readonly string[]; dcrRedirectUriPatterns?: readonly string[];
   defaultRedirectUris?: readonly string[]; callbackUrl?: string; logger?: Logger;
+  redirectUriPatterns?: readonly string[]; defaultRedirectUris?: readonly string[];
+  callbackUrl?: string; logger?: Logger;
+  cimd?: CimdResolverOptions;   // passed straight through to StatelessDcrClientStoreOptions.cimd
 }
 export function createXsuaaOAuthProvider(
   credentials: XsuaaCredentials, appUrl: string, options?: CreateXsuaaOAuthProviderOptions,
@@ -225,6 +263,7 @@ export interface AuthOptions {
     clientIdPrefix?: string; dcrKdfLabel?: string; stateKdfLabel?: string;
     resourceName?: string; scopesSupported?: string[]; requiredScopes?: string[];
     redirectUriPatterns?: readonly string[]; dcrRedirectUriPatterns?: readonly string[];
+    cimd?: CimdResolverOptions;   // omitted = off
     defaultRedirectUris?: readonly string[];
     dcrTtlSeconds?: number; stateTtlSeconds?: number; dcrSigningSecret?: string;
     callbackUrl?: string;   // this server's own /oauth/callback sent to XSUAA (#214); default `${appUrl}/oauth/callback`

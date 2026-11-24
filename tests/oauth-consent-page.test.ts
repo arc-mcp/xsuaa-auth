@@ -23,6 +23,13 @@ describe('OAuth consent page presentation', () => {
     expect(html).not.toMatch(/<(?:script|img|iframe|link|a)\b/i);
   });
 
+  it('names the host a client metadata document was fetched from, and only then', () => {
+    expect(renderConsentPage(options)).not.toContain('Client metadata hosted at');
+    const html = renderConsentPage({ ...options, clientIdHost: 'client.example' });
+    expect(html).toContain('Client metadata hosted at <span dir="ltr">client.example</span>');
+    expect(html).toContain('Application name (unverified)');
+  });
+
   it('keeps the complete form payload and prefixed authorization endpoint unchanged', () => {
     const html = renderConsentPage(options);
     expect(consentFields(html)).toEqual(options.fields);
